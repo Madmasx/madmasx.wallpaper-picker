@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "madmasx.wallpaper-picker",
+  "name": "Wallpaper picker",
+  "version": "1.0.0",
+  "author": "madmasx",
+  "description": "Browse, apply, import and delete wallpapers (images and live videos) from the active theme. Multi-monitor, masonry grid and auto-pause when windows cover the screen.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "interface/BarLauncher.qml"
+  },
+  "barWidget": {
+    "displayName": "Wallpaper picker",
+    "description": "Open the wallpaper picker panel",
+    "category": "Appearance",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

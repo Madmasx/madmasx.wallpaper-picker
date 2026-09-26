@@ -1,0 +1,13 @@
+# Sistema
+.DS_Store
+Thumbs.db
+
+# Editores
+.vscode/
+.idea/
+*.swp
+
+# Omarchy /Quickshell
+*.qmlc
+qmldir
+.qmlls.ini
