@@ -14,7 +14,7 @@ Plugin de [Omarchy](https://omarchy.org/) para navegar, aplicar, importar y elim
 - ✅ **Importa** fondos con `zenity` y **elimina** los tuyos moviéndolos a la papelera.
 - ✅ Se integra con el sistema: si cambias el fondo por el switcher de Omarchy, el plugin se aparta.
 - ✅ Se **adapta al tema activo**: colores, acentos y bordes se re-tematizan en vivo.
-- ✅ Panel **arrastrable** que recuerda su posición, con atajo `SUPER + ALT + W`.
+- ✅ Panel **arrastrable** que recuerda su posición.
 
 ## Requisitos
 
@@ -48,7 +48,7 @@ cd madmasx.wallpaper-picker
 
 ## Uso
 
-Abre el panel con **`SUPER + ALT + W`** o desde la terminal:
+Abre el panel con el **botón de la barra** o desde la terminal:
 
 ```bash
 omarchy shell madmasx.wallpaper-picker toggle    # abrir/cerrar
@@ -70,6 +70,16 @@ Dentro del panel:
 - **♪ ON/OFF** → sonido del vídeo (silenciado por defecto).
 - **⟳** → reescanea las carpetas de fondos.
 - **Escape** o clic fuera → cierra. **Arrastrar la cabecera** → mueve el panel.
+
+### Atajo de teclado (opcional)
+
+El plugin no modifica `bindings.lua` por ti, así que el atajo es opcional y lo registras tú si lo quieres. Añade esta línea a `~/.config/hypr/bindings.lua`:
+
+```lua
+bind = SUPER + ALT, W, omarchy shell madmasx.wallpaper-picker toggle, Wallpaper picker
+```
+
+Recarga Hyprland con `hyprctl reload` o cierra sesión.
 
 ## Dónde busca los fondos
 
