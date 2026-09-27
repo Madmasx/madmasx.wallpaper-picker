@@ -89,6 +89,40 @@ Se deduplican por nombre y se ignoran las descargas incompletas (`.part`, `.crdo
 - **Pausa por ventanas**: manda `set pause` por el socket IPC de `mpvpaper`, **sin matar el proceso** (volver es instantáneo). Cada 1,5 s mide si las ventanas del workspace visible tapan ≥90% del área de trabajo; usa la **unión** de los rectángulos, así que dos ventanas lado a lado cuentan como cobertura sin contar dos veces lo que se solapa. Medido: **~63% de un core reproduciendo → ~0% pausado**.
 - **Integración con Omarchy**: si con vídeos activos cambias el fondo por el switcher o cambias de tema, el plugin lo detecta (vigila el symlink `current/background`) y detiene los vídeos para no tapar el fondo nuevo.
 
+## Permisos y alcance
+
+Para que se pueda revisar sin instalar nada, esto es **exactamente** lo que hace el plugin y su instalador.
+
+### Usa `sudo` solo para esto
+
+```bash
+sudo pacman -S --needed --noconfirm mpvpaper socat
+```
+
+Se ejecuta **únicamente** desde `install.sh`, **solo si falta** `mpvpaper` o `socat`, y con `--needed` (no actualiza ni reinstala lo que ya está). Si no hay `pacman`, no hace nada y avisa. Si instalas con `omarchy plugin add`, **no se pide sudo en ningún momento** y las imágenes funcionan igual.
+
+### Rutas que escribe
+
+| Ruta | Para qué |
+|---|---|
+| `~/.config/omarchy/plugins/madmasx.wallpaper-picker/` | El propio plugin (Omarchy lo gestiona) |
+| `~/.local/state/omarchy/plugins/madmasx.wallpaper-picker/video` | Estado de los vídeos por monitor |
+| `~/.local/state/omarchy/plugins/madmasx.wallpaper-picker/ipc/` | Sockets IPC de mpv para la pausa |
+| `~/.local/state/omarchy/plugins/madmasx.wallpaper-picker/thumbs/` | Miniaturas de vídeo generadas con ffmpeg |
+| `~/.local/state/omarchy/plugins/madmasx.wallpaper-picker/{pos,autopause}` | Posición del panel y preferencia de pausa |
+| `~/.local/share/Trash/` | Solo si usas DELETE (envía a la papelera, no borra) |
+
+### Comandos que invoca
+
+`omarchy-theme-bg-set`, `omarchy plugin enable`, `omarchy restart shell`, `mpvpaper`, `pkill`, `hyprctl`, `ffmpeg`, `gio trash`, `socat`.
+
+### Lo que nunca hace
+
+- No escribe en tu tema, ni en configs de terminal (alacritty/ghostty/kitty), ni en Hyprland, ni en `bindings.lua`.
+- No borra directorios completos: `install.sh` reemplaza solo los archivos que pertenecen al plugin y pide confirmación antes.
+- No lee ni escribe fuera de tu `$HOME` (salvo el `sudo pacman` de arriba).
+- No envía nada a ningún servidor: no hay telemetría ni red más allá de descargar el repo al instalarlo.
+
 ## Desinstalar
 
 ```bash
