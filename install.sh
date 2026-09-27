@@ -77,4 +77,7 @@ else
   echo "  (no detecté omarchy; reinicia tu shell manualmente)"
 fi
 
-echo "Listo. Abre el picker con SUPER + ALT + W."
+echo "Listo. Abre el picker con el botón de la barra, o desde la terminal:"
+echo "  omarchy shell madmasx.wallpaper-picker toggle"
+echo "Atajo opcional (no lo registra el plugin): añádelo a ~/.config/hypr/bindings.lua"
+echo "  bind = SUPER + ALT, W, omarchy shell madmasx.wallpaper-picker toggle, Wallpaper picker"
