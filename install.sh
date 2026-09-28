@@ -64,6 +64,17 @@ verify_destination() {
 }
 
 echo "==> [2/3] Instalando plugin en $DEST"
+# Resuelve symlinks para detectar cuándo SRC y DEST son el mismo árbol físico
+# aunque sus cadenas difieran (p.ej. el destino es un symlink al checkout de
+# origen): borrar ahí eliminaría los archivos que tar va a leer.
+SRC_REAL="$(readlink -f "$SRC")"
+DEST_REAL="$(readlink -f "$DEST")"
+if [ "$SRC_REAL" = "$DEST_REAL" ]; then
+  echo "  el destino es el propio código fuente (mismo árbol vía symlink);"
+  echo "  no se copia ni borra nada. Usa ./install.sh desde un clone ajeno o"
+  echo "  deja que 'omarchy plugin add' gestione la instalación."
+  exit 0
+fi
 if [ "$SRC" = "$DEST" ]; then
   echo "  el origen ya es el destino; no se copia nada."
 else
