@@ -43,14 +43,53 @@ fi
 # directorio completo, para no tocar clones con cambios locales ni datos ajenos.
 OWNED_FILES="interface manifest.json README.md screenshot.png LICENSE .gitignore install.sh"
 
+# Comprueba que el destino sea realmente una instalación de ESTE plugin antes de
+# borrar o sobrescribir nada. Que un archivo se llame "interface" no prueba que
+# sea nuestro: un directorio ajeno en esa ruta perdería su árbol igual.
+# Devuelve: 0 = ok (vacío o es este plugin), 2 = sin manifest (no se puede
+# probar), 3 = manifest de otro plugin (colisión).
+verify_destination() {
+  local dest="$1" manifest id
+  [ -e "$dest" ] || return 0
+  manifest="$dest/manifest.json"
+  if [ ! -f "$manifest" ]; then
+    return 2
+  fi
+  id=$(sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest" | head -1)
+  if [ "$id" = "$PLUGIN_ID" ]; then
+    return 0
+  fi
+  DEST_ID="$id"
+  return 3
+}
+
 echo "==> [2/3] Instalando plugin en $DEST"
 if [ "$SRC" = "$DEST" ]; then
   echo "  el origen ya es el destino; no se copia nada."
 else
+  DEST_ID=""
+  vrc=0
+  verify_destination "$DEST" || vrc=$?
+  case "$vrc" in
+    2)
+      echo "ABORTADO: $DEST ya contiene archivos pero no tiene manifest.json."
+      echo "  No se puede confirmar que sea una instalación de este plugin, así que"
+      echo "  no se toca nada. Revisa la ruta y bórrala o renómbrala tú, y vuelve a"
+      echo "  ejecutar el instalador."
+      exit 1
+      ;;
+    3)
+      echo "ABORTADO: $DEST contiene otro plugin (id: '${DEST_ID:-desconocido}')."
+      echo "  No se sobrescribe nada. Si quieres instalar este plugin ahí, mueve o"
+      echo "  borra primero lo que haya en esa ruta."
+      exit 1
+      ;;
+  esac
+
   if [ -e "$DEST" ]; then
     if [ "$ASSUME_YES" -ne 1 ]; then
-      printf "  Ya hay algo instalado en %s.\n" "$DEST"
-      printf "  Se reemplazarán solo los archivos del plugin (los tuyos se conservan). ¿Continuar? [s/N] "
+      printf "  Destino verificado como instalación de %s.\n" "$PLUGIN_ID"
+      printf "  Se reemplazarán solo sus archivos; los tuyos se conservan. ¿Continuar? [s/N] "
       read -r reply || reply=""
       case "$reply" in
         [sSyY]*) ;;
