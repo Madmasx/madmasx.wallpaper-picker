@@ -100,14 +100,17 @@ Item {
     return item.path.indexOf(root.userBgDir) === 0
       || item.path.indexOf(root.themeDir) === 0
   }
-  // Mata solo el mpvpaper del monitor M. Dos detalles imprescindibles:
+  // Mata el mpvpaper del monitor M, pero SOLO el que lanzó este plugin.
+  // El cmdline de nuestros mpvpaper siempre incluye la ruta del socket IPC
+  // (madmasx.wallpaper-picker/ipc), así que el patrón no toca instancias ajenas.
+  // Dos detalles imprescindibles:
   // - el ancla `^mpvpaper`: sin ella el pkill también coincide con el propio
   //   bash -c (su cmdline contiene el patrón) y se suicidea con SIGTERM.
   // - `-9`: mpvpaper ignora SIGTERM, así que sin SIGKILL el vídeo viejo
   //   sobrevive y se queda pegado al fondo.
   function killMon(m) {
     var me = String(m || "").replace(/[][\\^$.*/+?(){}|]/g, "\\$&")
-    return "pkill -9 -f '^mpvpaper( .*)? " + me + " /' 2>/dev/null"
+    return "pkill -9 -f '^mpvpaper .*madmasx[.]wallpaper-picker/ipc.* " + me + " /' 2>/dev/null"
   }
   // Socket IPC de mpv para un monitor (mpvpaper lo crea al arrancar).
   function monSocket(m) {
@@ -488,7 +491,7 @@ function ingestScan(raw) {
       + "IFS=$'\\t' read -r mon path snd img < \"$st\"; "
       + "cur=$(readlink -f " + root.shq(root.currentBgLink) + " 2>/dev/null || true); "
       + "if [ \"$cur\" != \"$img\" ]; then "
-      + "pkill -9 -f '^mpvpaper' 2>/dev/null; rm -f " + root.shq(root.ipcDir) + "/*.sock; "
+      + "pkill -9 -f '^mpvpaper .*madmasx[.]wallpaper-picker/ipc' 2>/dev/null; rm -f " + root.shq(root.ipcDir) + "/*.sock; "
       + "rm -f \"$st\"; echo CHANGED; fi"]
     watchProc.running = true
   }
@@ -801,9 +804,12 @@ function ingestScan(raw) {
     if (!item || !root.isRemovable(item)) return
     root.pendingRemove = item.path
     console.log("[picker.WM] eliminar: confirmando " + item.name)
-    removeConfirmProc.command = ["bash", "-c",
-      "zenity --question --title=\"Delete wallpaper\" "
-      + "--text=\"Delete \\\"" + item.name + "\\\" from the list?\\n(it will be moved to Trash)\""]
+    // OJO: sin bash aquí a propósito. Process.command es un argv directo
+    // (sin shell), así que un nombre de archivo con $(...), comillas o
+    // punto y coma nunca se interpreta: llega a zenity como texto literal.
+    removeConfirmProc.command = ["zenity", "--question",
+      "--title=Delete wallpaper",
+      "--text=Delete \"" + item.name + "\" from the list?\n(it will be moved to Trash)"]
     removeConfirmProc.running = true
   }
 
@@ -816,7 +822,7 @@ function ingestScan(raw) {
       + "while IFS=$'\\t' read -r vmon vpath vsnd vimg; do "
       + "[ \"$vpath\" = \"$p\" ] && { "
       + "vm=$(printf '%s' \"$vmon\" | sed 's/[][^$.*/]/\\\\&/g'); "
-      + "pkill -9 -f \"^mpvpaper( .*)? $vm /\" 2>/dev/null; "
+      + "pkill -9 -f \"^mpvpaper .*madmasx[.]wallpaper-picker/ipc.* $vm /\" 2>/dev/null; "
       + "rm -f " + root.shq(root.ipcDir) + "/$(printf '%s' \"$vmon\" | tr -c 'A-Za-z0-9._-' '_').sock; "
       + "echo '[picker.WM] vídeo borrado: '\"$vmon\"''; }; "
       + "done < \"$st\"; "
