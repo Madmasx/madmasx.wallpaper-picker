@@ -1,6 +1,7 @@
 import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
+import Quickshell.Hyprland
 import QtQuick 6.11
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -51,6 +52,8 @@ Item {
 
   // Stubs for the injections BarWidget sends (bar) so injectPanel() stays clean.
   property var bar: null
+  // Monitor donde se coloca el panel; lo fija el shell al abrir (monitor con foco).
+  property var panelScreen: null
 
   readonly property var imageExts: ["jpg", "jpeg", "png", "gif", "bmp", "webp"]
   readonly property var videoExts: ["mkv", "mp4", "webm", "avi"]
@@ -67,8 +70,7 @@ Item {
   readonly property color unselectedTileColor: Color.imagePicker.unselectedBorder
 
   readonly property string statusText: root.applyVideoActive
-    ? "▶ Video active on " + (root.currentMonitor || "?") + " · "
-      + (root.videoSoundActive ? "sound ON" : "muted")
+    ? "▶ Wallpaper active on " + (root.currentMonitor || "?")
     : (root.activeBackground ? "Background: " + root.baseName(root.activeBackground) : "Nothing applied yet")
 
   // Alterna el sonido del vídeo en vivo. Si hay vídeo activo, se reaplica con
@@ -122,68 +124,48 @@ Item {
     return s
   }
 
+  // Coloca el panel en el monitor con foco (el que el usuario está usando) y
+  // deja ese monitor seleccionado para APPLY. Síncrono vía Quickshell.Hyprland:
+  // no hay parpadeo de abrir en el monitor primario y saltar después.
+  function applyFocusedScreen() {
+    var fm = Hyprland.focusedMonitor
+    if (!fm || !fm.name) return
+    var screens = Quickshell.screens
+    for (var i = 0; i < screens.length; i++) {
+      if (screens[i].name === fm.name) {
+        if (root.panelScreen !== screens[i]) root.panelScreen = screens[i]
+        break
+      }
+    }
+    root.currentMonitor = fm.name
+  }
+
   function open() {
+    root.applyFocusedScreen()
     root.opened = true
     root.positionCard()
     root.refreshMonitors()
     root.scan()
     root.readCurrent()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
-    console.log("[picker.WM] open()")
+    console.log("[picker.WM] open() en " + (root.currentMonitor || "?"))
   }
 
-  // ---------- posición de la tarjeta (arrastrable, memorable) ----------
+  // ---------- posición de la tarjeta ----------
+  // Al abrir, la tarjeta aparece centrada en el monitor del panel. Se puede
+  // arrastrar desde la cabecera; la posición se mantiene durante la sesión.
 
-  property int cardX: NaN
-  property int cardY: NaN
-  readonly property string posFile: root.stateHome + "/omarchy/plugins/madmasx.wallpaper-picker/pos"
   readonly property string thumbsDir: root.stateHome + "/omarchy/plugins/madmasx.wallpaper-picker/thumbs"
   readonly property string videoStateFile: root.stateHome + "/omarchy/plugins/madmasx.wallpaper-picker/video"
 
   function positionCard() {
-    if (!Number.isFinite(root.cardX)) {
-      card.x = Math.round(Math.max(0, (panel.width - card.width) / 2))
-      card.y = Math.round(Math.max(0, (panel.height - card.height) / 2))
-    } else {
-      card.x = Math.max(0, Math.min(root.cardX, panel.width - card.width))
-      card.y = Math.max(0, Math.min(root.cardY, panel.height - card.height))
-    }
-  }
-
-  function saveCardPos() {
-    savePosProc.command = ["bash", "-c",
-      "mkdir -p " + root.shq(root.home + "/.local/state/omarchy/plugins/madmasx.wallpaper-picker")
-      + " && printf '%s %s\\n' " + card.x + " " + card.y + " > " + root.shq(root.posFile)]
-    savePosProc.running = true
-  }
-
-  Process {
-    id: savePosProc
-  }
-
-  function loadCardPos() {
-    loadPosProc.running = true
-  }
-
-  Process {
-    id: loadPosProc
-    command: ["bash", "-c", "cat " + root.shq(root.posFile) + " 2>/dev/null"]
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        var parts = String(text || "").trim().split(/\s+/)
-        var x = parseInt(parts[0], 10)
-        var y = parseInt(parts[1], 10)
-        if (Number.isFinite(x) && Number.isFinite(y)) {
-          root.cardX = x
-          root.cardY = y
-        }
-      }
-    }
+    card.x = Math.round(Math.max(0, (panel.width - card.width) / 2))
+    card.y = Math.round(Math.max(0, (panel.height - card.height) / 2))
   }
 
   function close() {
     root.opened = false
+    root.pendingRemove = ""
     console.log("[picker.WM] close()")
   }
 
@@ -380,32 +362,47 @@ function ingestScan(raw) {
 
   function applyImage(item) {
     var m = root.currentMonitor
+    if (!m) {
+      console.warn("[picker.WM] sin monitor para la imagen")
+      return
+    }
+    var ipc = "--input-ipc-server=" + root.monSocket(m)
+    var opts = "no-audio panscan=1.0 image-display-duration=inf load-scripts=no " + ipc
+    root.applyVideoActive = true
     applyProc.command = ["bash", "-c",
       "m=" + root.shq(m) + "; " + root.killMon(m) + "; "
-      + "rm -f " + root.shq(root.monSocket(m)) + "; "
-      + "omarchy-theme-bg-set " + root.shq(item.path) + "; "
       + "st=" + root.shq(root.videoStateFile) + "; "
+      + "mkdir -p " + root.shq(root.stateHome) + "/omarchy/plugins/madmasx.wallpaper-picker; "
+      + "mkdir -p " + root.shq(root.ipcDir) + "; "
+      + "rm -f " + root.shq(root.monSocket(m)) + "; "
       + "b=$(readlink -f " + root.shq(root.currentBgLink) + " 2>/dev/null || true); "
-      + "if [ -f \"$st\" ] && [ -n \"$b\" ]; then "
-      + "awk -F'\t' -v m=\"$m\" -v b=\"$b\" 'NF>=3 && $1!=m { print $1\"\\t\"$2\"\\t\"$3\"\\t\"b }' \"$st\" > \"$st.tmp\" && mv \"$st.tmp\" \"$st\"; "
-      + "fi; "
-      + "if [ -s \"$st\" ]; then echo UP; else rm -f \"$st\"; echo DOWN; fi"]
+      + "t=\"$st.tmp\"; : > \"$t\"; "
+      + "[ -f \"$st\" ] && awk -F'\t' -v m=\"$m\" 'NF>=3 && $1!=m' \"$st\" >> \"$t\"; "
+      + "printf '%s\\t%s\\t%s\\t%s\\n' \"$m\" " + root.shq(item.path) + " 0 \"$b\" >> \"$t\"; "
+      + "mv \"$t\" \"$st\"; "
+      + "if grep -qs 0x10de /sys/class/drm/card*/device/vendor 2>/dev/null && grep -qsE '0x8086|0x1002' /sys/class/drm/card*/device/vendor 2>/dev/null && [ -f /usr/share/glvnd/egl_vendor.d/50_mesa.json ]; then "
+      + "export __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json; fi; "
+      + "EGL_PLATFORM=wayland mpvpaper -f -o " + root.shq(opts) + " \"$m\" "
+      + root.shq(item.path) + " >/dev/null 2>&1 & echo UP"]
     applyProc.running = true
-    console.log("[picker.WM] aplicar imagen: " + item.path + " → base global, vídeos de "
-      + (m || "?") + " detenidos, el resto intacto")
+    console.log("[picker.WM] imagen por monitor: " + item.path + " → " + m
+      + " (el resto de monitores intacto)")
   }
 
   function applyVideo(item) {
-    root.applyVideoActive = true
     if (!root.currentMonitor) {
       console.warn("[picker.WM] sin monitor para mpvpaper")
       return
     }
+    root.applyVideoActive = true
     var m = root.currentMonitor
     var audioOpt = root.videoSoundActive ? "loop" : "no-audio loop"
     var soundFlag = root.videoSoundActive ? 1 : 0
     //El socket IPC permite pausar el vídeo sin matarlo (ver pausa automática)
     var ipc = "--input-ipc-server=" + root.monSocket(m)
+    // load-scripts=no: evita que mpv-mpris registre el wallpaper como un
+    // reproductor MPRIS (el widget de media lo mostraba como "reproduciendo").
+    var mpvOpts = audioOpt + " load-scripts=no " + ipc
     applyProc.command = ["bash", "-c",
       "m=" + root.shq(m) + "; " + root.killMon(m) + "; "
       + "st=" + root.shq(root.videoStateFile) + "; "
@@ -420,8 +417,8 @@ function ingestScan(raw) {
       + "mv \"$t\" \"$st\"; "
       + "if grep -qs 0x10de /sys/class/drm/card*/device/vendor 2>/dev/null && grep -qsE '0x8086|0x1002' /sys/class/drm/card*/device/vendor 2>/dev/null && [ -f /usr/share/glvnd/egl_vendor.d/50_mesa.json ]; then "
       + "export __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json; fi; "
-      + "EGL_PLATFORM=wayland mpvpaper -f -o " + root.shq(audioOpt + " " + ipc) + " \"$m\" "
-      + root.shq(item.path) + "; echo UP"]
+      + "EGL_PLATFORM=wayland mpvpaper -f -o " + root.shq(mpvOpts) + " \"$m\" "
+      + root.shq(item.path) + " >/dev/null 2>&1 & echo UP"]
     applyProc.running = true
     console.log("[picker.WM] vídeo vivo: " + item.path + " en " + m + " · " + audioOpt)
     console.log("[picker.WM] vídeos persistentes (se relanzan al iniciar sesión)")
@@ -448,9 +445,12 @@ function ingestScan(raw) {
       + "while IFS=$'\\t' read -r mon path snd img; do "
       + "[ -f \"$path\" ] || continue; "
       + "o=loop; [ \"$snd\" = 0 ] && o='no-audio loop'; "
+      + "o=\"$o load-scripts=no\"; "
+      + "ext=\"${path##*.}\"; ext=$(printf '%s' \"$ext\" | tr 'A-Z' 'a-z'); "
+      + "case \"$ext\" in jpg|jpeg|png|gif|bmp|webp) o=\"$o panscan=1.0 image-display-duration=inf\";; esac; "
       + "sock=\"$(dirname " + root.shq(root.ipcDir) + ")/ipc/$(printf '%s' \"$mon\" | tr -c 'A-Za-z0-9._-' '_').sock\"; "
       + "rm -f \"$sock\"; "
-      + "EGL_PLATFORM=wayland mpvpaper -f -o \"$o --input-ipc-server=$sock\" \"$mon\" \"$path\" || true; n=$((n+1)); "
+      + "EGL_PLATFORM=wayland mpvpaper -f -o \"$o --input-ipc-server=$sock\" \"$mon\" \"$path\" >/dev/null 2>&1 & n=$((n+1)); "
       + "done < \"$st\"; "
       + "echo '[picker.WM] vídeos restaurados: '\"$n\""]
     restoreProc.running = true
@@ -725,7 +725,6 @@ function ingestScan(raw) {
       // Al reaplicar, el estado de pausa anterior ya no es válido: que el
       // siguiente ciclo de evalCover reevalúe desde cero.
       root.pausedNow = {}
-      root.readCurrent()
       if (root.applyVideoActive) Qt.callLater(root.evalCover)
     }
   }
@@ -803,14 +802,8 @@ function ingestScan(raw) {
     var item = root.currentIndex >= 0 ? root.images[root.currentIndex] : null
     if (!item || !root.isRemovable(item)) return
     root.pendingRemove = item.path
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
     console.log("[picker.WM] eliminar: confirmando " + item.name)
-    // OJO: sin bash aquí a propósito. Process.command es un argv directo
-    // (sin shell), así que un nombre de archivo con $(...), comillas o
-    // punto y coma nunca se interpreta: llega a zenity como texto literal.
-    removeConfirmProc.command = ["zenity", "--question",
-      "--title=Delete wallpaper",
-      "--text=Delete \"" + item.name + "\" from the list?\n(it will be moved to Trash)"]
-    removeConfirmProc.running = true
   }
 
   function removeItem(path) {
@@ -834,20 +827,6 @@ function ingestScan(raw) {
       + "[ -e \"$p\" ] && { echo 'ERROR no se pudo eliminar'; exit 1; }; "
       + "[ -s \"$st\" ] && echo UP || { rm -f \"$st\"; echo DOWN; }"]
     removeProc.running = true
-  }
-
-  Process {
-    id: removeConfirmProc
-    onExited: function(code) {
-      console.log("[picker.WM] confirmación remove exit=" + code)
-      if (code === 0 && root.pendingRemove) {
-        var p = root.pendingRemove
-        root.pendingRemove = ""
-        root.removeItem(p)
-      } else {
-        root.pendingRemove = ""
-      }
-    }
   }
 
   Process {
@@ -949,6 +928,9 @@ function ingestScan(raw) {
   PanelWindow {
     id: panel
     visible: root.opened
+    screen: root.panelScreen
+    onWidthChanged: if (root.opened) root.positionCard()
+    onHeightChanged: if (root.opened) root.positionCard()
     anchors { top: true; bottom: true; left: true; right: true }
     color: Qt.rgba(0, 0, 0, 0)
     WlrLayershell.namespace: "madmasx-wallpaper-picker"
@@ -959,7 +941,9 @@ function ingestScan(raw) {
     // El escape y el click en el fondo cierran el panel.
     Shortcut {
       sequence: "Escape"
-      enabled: root.opened
+      // Mientras el diálogo de borrado está abierto, el keyCatcher se encarga
+      // de cancelarlo; si no, este atajo cierra el panel.
+      enabled: root.opened && root.pendingRemove === ""
       onActivated: root.close()
     }
 
@@ -1269,7 +1253,7 @@ function ingestScan(raw) {
             spacing: 8
 
             Text {
-              text: "DISPLAY · FOR LIVE VIDEO"
+              text: "DISPLAY · PER MONITOR"
               font.pixelSize: 8
               font.bold: true
               font.letterSpacing: 1.6
@@ -1549,36 +1533,125 @@ function ingestScan(raw) {
           }
         }
 
-        // Asa de arrastre: mueve la tarjeta desde la cabecera.
+        // Asa de arrastre: mueve la tarjeta desde la cabecera. Con drag.target
+        // el movimiento es 1:1 (el QML compensa que el asa viaje con la propia
+        // tarjeta) y minimum/maximum lo mantienen dentro del monitor.
         MouseArea {
-          property bool dragging: false
-          property int sx: 0
-          property int sy: 0
-          property int bx: 0
-          property int by: 0
           anchors.top: parent.top
           anchors.left: parent.left
           anchors.right: parent.right
           height: 46
-          cursorShape: dragging ? Qt.ClosedHandCursor : Qt.OpenHandCursor
-          onPressed: function(mouse) {
-            dragging = true
-            sx = mouse.x
-            sy = mouse.y
-            bx = card.x
-            by = card.y
+          cursorShape: drag.active ? Qt.ClosedHandCursor : Qt.OpenHandCursor
+          drag.target: card
+          drag.axis: Drag.XAndYAxis
+          drag.minimumX: 0
+          drag.minimumY: 0
+          drag.maximumX: panel.width - card.width
+          drag.maximumY: panel.height - card.height
+          drag.threshold: 6
+          drag.smoothed: true
+        }
+      }
+    }
+
+    // Confirmación de borrado DENTRO del panel. Una ventana externa (zenity)
+    // queda siempre debajo del layer-shell Overlay, así que se dibuja aquí.
+    Rectangle {
+      id: removeConfirm
+      anchors.fill: parent
+      visible: root.pendingRemove !== ""
+      color: Util.alpha(Color.background, 0.55)
+      z: 1000
+
+      // Bloquea clics al fondo y a la tarjeta mientras está abierto.
+      MouseArea { anchors.fill: parent; onClicked: {} }
+
+      Rectangle {
+        width: 360
+        height: 150
+        anchors.centerIn: parent
+        radius: 14
+        color: root.dBg
+        border { color: root.dBorder; width: 1 }
+
+        Column {
+          anchors.fill: parent
+          anchors.margins: 16
+          spacing: 10
+
+          Text {
+            width: parent.width
+            text: "DELETE WALLPAPER"
+            font.pixelSize: 11
+            font.bold: true
+            font.letterSpacing: 1.6
+            textFormat: Text.PlainText
+            color: root.dDanger
           }
-          onPositionChanged: function(mouse) {
-            if (!dragging) return
-            card.x = Math.max(0, Math.min(bx + (mouse.x - sx), panel.width - card.width))
-            card.y = Math.max(0, Math.min(by + (mouse.y - sy), panel.height - card.height))
+          Text {
+            width: parent.width
+            text: root.baseName(root.pendingRemove)
+            font.pixelSize: 12
+            textFormat: Text.PlainText
+            elide: Text.ElideMiddle
+            color: root.dText
           }
-          onReleased: function() {
-            if (!dragging) return
-            dragging = false
-            root.cardX = card.x
-            root.cardY = card.y
-            root.saveCardPos()
+          Text {
+            width: parent.width
+            text: "It will be moved to Trash."
+            font.pixelSize: 10
+            textFormat: Text.PlainText
+            color: root.dMuted
+          }
+          Row {
+            anchors.right: parent.right
+            spacing: 8
+            Rectangle {
+              width: 96
+              height: 32
+              radius: 16
+              color: root.dSurface
+              border { color: root.dBorder; width: 1 }
+              Text {
+                anchors.centerIn: parent
+                text: "CANCEL"
+                font.pixelSize: 10
+                font.bold: true
+                font.letterSpacing: 1.2
+                textFormat: Text.PlainText
+                color: root.dMuted
+              }
+              MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.pendingRemove = ""
+              }
+            }
+            Rectangle {
+              width: 96
+              height: 32
+              radius: 16
+              color: Util.alpha(root.dDanger, 0.12)
+              border { color: root.dDanger; width: 1 }
+              Text {
+                anchors.centerIn: parent
+                text: "DELETE"
+                font.pixelSize: 10
+                font.bold: true
+                font.letterSpacing: 1.2
+                textFormat: Text.PlainText
+                color: root.dDanger
+              }
+              MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: {
+                  var p = root.pendingRemove
+                  root.pendingRemove = ""
+                  root.removeItem(p)
+                }
+              }
+            }
           }
         }
       }
@@ -1591,7 +1664,8 @@ function ingestScan(raw) {
       anchors.fill: parent
       Keys.onPressed: function(event) {
         if (event.key === Qt.Key_Escape) {
-          root.close()
+          if (root.pendingRemove !== "") root.pendingRemove = ""
+          else root.close()
           event.accepted = true
         }
       }
@@ -1603,12 +1677,13 @@ function ingestScan(raw) {
     if (root.themeName) Qt.callLater(root.scan)
   }
 
+  onPanelScreenChanged: if (root.opened) Qt.callLater(root.positionCard)
+
   Component.onCompleted: {
     themeNameView.reload()
     root.refreshMonitors()
     root.scan()
     root.readCurrent()
-    root.loadCardPos()
     root.loadAutoPause()
     Qt.callLater(root.maybeRestoreVideo)
     console.log("[picker.WM] listo, fondos=" + root.themeDir)

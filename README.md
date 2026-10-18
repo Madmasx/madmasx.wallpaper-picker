@@ -8,24 +8,24 @@ Plugin de [Omarchy](https://omarchy.org/) para navegar, aplicar, importar y elim
 
 - ✅ **Grid masonry** con las miniaturas de los fondos del tema activo, cada una a su proporción real.
 - ✅ **Vídeos vivos** con `mpvpaper`: loop, con o sin sonido, y **miniatura autogenerada** (fotograma extraído con `ffmpeg` y cacheado).
-- ✅ **Un vídeo por monitor**: puedes tener fondos distintos en cada pantalla y aplicar en uno **no toca** los demás.
+- ✅ **Un fondo por monitor** (imagen o vídeo): puedes tener fondos distintos en cada pantalla y aplicar en uno **no toca** los demás.
 - ✅ **Pausa automática**: si una ventana tapa casi todo un monitor, el vídeo se pausa solo y vuelve al despejarse.
 - ✅ **Persistencia**: el fondo aplicado sobrevive a reinicios y cambios de workspace.
 - ✅ **Importa** fondos con `zenity` y **elimina** los tuyos moviéndolos a la papelera.
 - ✅ Se integra con el sistema: si cambias el fondo por el switcher de Omarchy, el plugin se aparta.
 - ✅ Se **adapta al tema activo**: colores, acentos y bordes se re-tematizan en vivo.
-- ✅ Panel **arrastrable** que recuerda su posición.
+- ✅ Panel **arrastrable**; al abrir aparece centrado en el monitor activo.
 
 ## Requisitos
 
 | Paquete | ¿Necesario? | Para qué |
 |---|---|---|
 | Omarchy + Hyprland + Quickshell | **Sí** | El shell donde vive el plugin |
-| `mpvpaper` | Solo para vídeos | Reproducir `.mkv`/`.mp4` como fondo |
+| `mpvpaper` | **Sí** (para aplicar fondos) | Mostrar imágenes o vídeos por monitor |
 | `ffmpeg` | Solo para vídeos | Generar las miniaturas (viene con `mpv`) |
 | `socat` | Recomendado | Pausar el vídeo por IPC |
 
-Las imágenes **funcionan sin instalar nada extra**.
+Sin `mpvpaper` el plugin no puede aplicar fondos por monitor; el fondo global del tema sigue mostrándose igual.
 
 ## Instalación
 
@@ -69,7 +69,7 @@ Dentro del panel:
 - **AUTO / OFF** → activa o desactiva la pausa automática cuando una ventana tapa el monitor.
 - **♪ ON/OFF** → sonido del vídeo (silenciado por defecto).
 - **⟳** → reescanea las carpetas de fondos.
-- **Escape** o clic fuera → cierra. **Arrastrar la cabecera** → mueve el panel.
+- **Escape** o clic fuera → cierra. **Arrastrar la cabecera** → mueve el panel (dentro del monitor).
 
 ### Atajo de teclado (opcional)
 
@@ -93,11 +93,12 @@ Se deduplican por nombre y se ignoran las descargas incompletas (`.part`, `.crdo
 
 ## Cómo funciona
 
-- **Imágenes**: se enlazan con `omarchy-theme-bg-set`, así que persisten y viajan con el tema en git.
+- **Imágenes**: se aplican con `mpvpaper` (`image-display-duration=inf`) en el monitor elegido, igual que los vídeos; el fondo global del tema queda intacto y se ve en los monitores sin overlay.
 - **Vídeos**: `mpvpaper -f -o [no-audio ]loop <monitor> <archivo>`, uno por monitor. El estado (monitor, archivo, sonido y el fondo base) se guarda en `~/.local/state/omarchy/plugins/madmasx.wallpaper-picker/video` y se relanza al iniciar sesión.
+- **Sin MPRIS**: todas las instancias se lanzan con `load-scripts=no`, así `mpv-mpris` no registra el wallpaper como un reproductor de media.
 - **GPUs híbridas**: en equipos con NVIDIA **e** Intel/AMD fuerza el EGL de Mesa (`__EGL_VENDOR_LIBRARY_FILENAMES=50_mesa.json`) para evitar los crashes del driver NVIDIA al renderizar sobre una superficie ajena. En equipos de una sola GPU no cambia nada.
 - **Pausa por ventanas**: manda `set pause` por el socket IPC de `mpvpaper`, **sin matar el proceso** (volver es instantáneo). Cada 1,5 s mide si las ventanas del workspace visible tapan ≥90% del área de trabajo; usa la **unión** de los rectángulos, así que dos ventanas lado a lado cuentan como cobertura sin contar dos veces lo que se solapa. Medido: **~63% de un core reproduciendo → ~0% pausado**.
-- **Integración con Omarchy**: si con vídeos activos cambias el fondo por el switcher o cambias de tema, el plugin lo detecta (vigila el symlink `current/background`) y detiene los vídeos para no tapar el fondo nuevo.
+- **Integración con Omarchy**: si con fondos por monitor activos cambias el fondo por el switcher o cambias de tema, el plugin lo detecta (vigila el symlink `current/background`) y detiene los fondos para no tapar el fondo nuevo.
 
 ## Permisos y alcance
 
@@ -109,22 +110,22 @@ Para que se pueda revisar sin instalar nada, esto es **exactamente** lo que hace
 sudo pacman -S --needed --noconfirm mpvpaper socat
 ```
 
-Se ejecuta **únicamente** desde `install.sh`, **solo si falta** `mpvpaper` o `socat`, y con `--needed` (no actualiza ni reinstala lo que ya está). Si no hay `pacman`, no hace nada y avisa. Si instalas con `omarchy plugin add`, **no se pide sudo en ningún momento** y las imágenes funcionan igual.
+Se ejecuta **únicamente** desde `install.sh`, **solo si falta** `mpvpaper` o `socat`, y con `--needed` (no actualiza ni reinstala lo que ya está). Si no hay `pacman`, no hace nada y avisa. Si instalas con `omarchy plugin add`, **no se pide sudo en ningún momento**; sin `mpvpaper` no se pueden aplicar fondos por monitor.
 
 ### Rutas que escribe
 
 | Ruta | Para qué |
 |---|---|
 | `~/.config/omarchy/plugins/madmasx.wallpaper-picker/` | El propio plugin (Omarchy lo gestiona) |
-| `~/.local/state/omarchy/plugins/madmasx.wallpaper-picker/video` | Estado de los vídeos por monitor |
+| `~/.local/state/omarchy/plugins/madmasx.wallpaper-picker/video` | Estado de los fondos por monitor (imagen/vídeo) |
 | `~/.local/state/omarchy/plugins/madmasx.wallpaper-picker/ipc/` | Sockets IPC de mpv para la pausa |
 | `~/.local/state/omarchy/plugins/madmasx.wallpaper-picker/thumbs/` | Miniaturas de vídeo generadas con ffmpeg |
-| `~/.local/state/omarchy/plugins/madmasx.wallpaper-picker/{pos,autopause}` | Posición del panel y preferencia de pausa |
+| `~/.local/state/omarchy/plugins/madmasx.wallpaper-picker/autopause` | Preferencia de pausa automática |
 | `~/.local/share/Trash/` | Solo si usas DELETE (envía a la papelera, no borra) |
 
 ### Comandos que invoca
 
-`omarchy-theme-bg-set`, `omarchy plugin enable`, `omarchy restart shell`, `mpvpaper`, `pkill`, `hyprctl`, `ffmpeg`, `gio trash`, `socat`.
+`omarchy plugin enable`, `omarchy restart shell`, `mpvpaper`, `pkill`, `hyprctl`, `ffmpeg`, `gio trash`, `socat`.
 
 ### Lo que nunca hace
 
