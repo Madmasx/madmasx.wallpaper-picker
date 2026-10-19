@@ -29,6 +29,7 @@ Item {
   readonly property string themeDir: root.userBgDir
   readonly property string themeSysDir: "/usr/share/omarchy/themes/" + root.themeName + "/backgrounds"
   property var images: []
+  property var themeList: []
   property string filterKind: "all"
   readonly property int visibleCount: {
     var c = 0
@@ -1003,13 +1004,31 @@ function ingestScan(raw) {
     root.queueMasonry()
   }
 
-  // Alterna los dos temas del mockup. omarchy-theme-set cambia el tema real
-  // (colores + fondos); el plugin se recarga solo al detectar theme.name.
-  function toggleTheme() {
-    var next = root.themeName.trim().toLowerCase() === "catppuccin" ? "dark-carbon" : "catppuccin"
-    console.log("[picker.WM] cambiar tema → " + next)
-    themeProc.command = ["omarchy-theme-set", next]
+  // Lista de temas instalados (sistema + usuario) para OTHER THEMES.
+  function loadThemeList() {
+    themeListProc.command = ["bash", "-c",
+      "{ find /usr/share/omarchy/themes -mindepth 1 -maxdepth 1 -type d -printf '%f\\n'; "
+      + "find " + root.shq(root.home + "/.config/omarchy/themes") + " -mindepth 1 -maxdepth 1 -type d -printf '%f\\n'; } 2>/dev/null "
+      + "| grep -v '^\\.' | sort -u"]
+    themeListProc.running = true
+  }
+
+  function setTheme(name) {
+    if (!name) return
+    console.log("[picker.WM] cambiar tema → " + name)
+    themeProc.command = ["omarchy-theme-set", name]
     themeProc.running = true
+    themeMenu.close()
+  }
+
+  Process {
+    id: themeListProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.themeList = String(text || "")
+        .split("\n")
+        .filter(function(s) { return s.trim() !== "" })
+    }
   }
 
   // ---------- ventana del panel ----------
@@ -1032,7 +1051,7 @@ function ingestScan(raw) {
       sequence: "Escape"
       // Mientras el diálogo de borrado está abierto, el keyCatcher se encarga
       // de cancelarlo; si no, este atajo cierra el panel.
-      enabled: root.opened && root.pendingRemove === ""
+      enabled: root.opened && root.pendingRemove === "" && !themeMenu.visible
       onActivated: root.close()
     }
 
@@ -1149,48 +1168,108 @@ function ingestScan(raw) {
               }
             }
 
-            // Etiqueta del tema: píldora con punto de acento (como el mockup).
-            // Clic = alterna catppuccin ↔ dark-carbon (como el mockup HTML).
+            // Selector de tema segmentado: tema actual | OTHER THEMES.
             Rectangle {
-              id: themeBadge
+              id: themeSwitch
               anchors.right: parent.right
               anchors.verticalCenter: parent.verticalCenter
-              height: 28
-              width: tagRow.implicitWidth + 24
-              radius: 14
-              color: themeBadge.badgeHover ? root.dSurfaceHi : root.dSurface
-              border { color: themeBadge.badgeHover ? root.dAccent : root.dBorder; width: 1 }
-              property bool badgeHover: false
+              height: 30
+              width: themeSegments.implicitWidth + 4
+              radius: 15
+              color: Util.alpha(root.dText, 0.03)
+              border { color: root.dBorder; width: 1 }
 
-              RowLayout {
-                id: tagRow
+              Row {
+                id: themeSegments
                 anchors.centerIn: parent
-                spacing: 7
+                spacing: 0
+
+                // Segmento activo: tema actual
                 Rectangle {
-                  Layout.alignment: Qt.AlignVCenter
-                  width: 7
-                  height: 7
-                  radius: 3.5
-                  color: root.dAccent
+                  width: currentThemeLabel.implicitWidth + 20
+                  height: 26
+                  radius: 13
+                  color: Util.alpha(root.dText, 0.10)
+                  Text {
+                    id: currentThemeLabel
+                    anchors.centerIn: parent
+                    text: (root.themeName.trim() || "?").toUpperCase()
+                    font.pixelSize: 9
+                    font.weight: Font.Bold
+                    font.letterSpacing: 1.4
+                    textFormat: Text.PlainText
+                    color: root.dText
+                  }
                 }
-                Text {
-                  Layout.alignment: Qt.AlignVCenter
-                  text: (root.themeName.trim() || "?").toUpperCase()
-                  font.pixelSize: 10
-                  font.weight: Font.Bold
-                  font.letterSpacing: 1.5
-                  textFormat: Text.PlainText
-                  color: root.dText
+
+                // Segmento OTHER THEMES
+                Rectangle {
+                  width: otherThemesLabel.implicitWidth + 20
+                  height: 26
+                  radius: 13
+                  color: otherMouse.containsMouse || themeMenu.visible
+                    ? Util.alpha(root.dText, 0.06) : "transparent"
+                  Text {
+                    id: otherThemesLabel
+                    anchors.centerIn: parent
+                    text: "OTHER THEMES"
+                    font.pixelSize: 9
+                    font.weight: Font.Bold
+                    font.letterSpacing: 1.4
+                    textFormat: Text.PlainText
+                    color: otherMouse.containsMouse || themeMenu.visible ? root.dText : root.dMuted
+                  }
+                  MouseArea {
+                    id: otherMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                      root.loadThemeList()
+                      themeMenu.open()
+                    }
+                  }
                 }
               }
+            }
 
-              MouseArea {
-                anchors.fill: parent
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onEntered: themeBadge.badgeHover = true
-                onExited: themeBadge.badgeHover = false
-                onClicked: root.toggleTheme()
+            // Menú de temas dentro del panel (sin ventanas externas)
+            Popup {
+              id: themeMenu
+              x: themeSwitch.x + themeSwitch.width - width
+              y: themeSwitch.y + themeSwitch.height + 6
+              width: 220
+              height: Math.min(root.themeList.length * 30 + 8, 300)
+              padding: 4
+              closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+              background: Rectangle {
+                radius: 10
+                color: root.dBg
+                border { color: root.dBorder; width: 1 }
+              }
+              contentItem: ListView {
+                clip: true
+                model: root.themeList
+                ScrollBar.vertical: ScrollBar {}
+                delegate: ItemDelegate {
+                  required property string modelData
+                  width: ListView.view.width
+                  height: 30
+                  contentItem: Text {
+                    text: modelData
+                    font.pixelSize: 11
+                    font.weight: modelData === root.themeName.trim() ? Font.DemiBold : Font.Normal
+                    textFormat: Text.PlainText
+                    color: modelData === root.themeName.trim() ? root.dAccent : root.dText
+                    verticalAlignment: Text.AlignVCenter
+                    leftPadding: 10
+                  }
+                  background: Rectangle {
+                    radius: 6
+                    color: highlighted ? Util.alpha(root.dAccent, 0.12) : "transparent"
+                  }
+                  onClicked: root.setTheme(modelData)
+                }
               }
             }
           }
@@ -1422,7 +1501,6 @@ function ingestScan(raw) {
                           Item {
                             id: thumbWrap
                             anchors { top: parent.top; left: parent.left; right: parent.right; bottom: titleBar.top }
-                            clip: true
 
                             Image {
                               id: shot
@@ -1432,8 +1510,9 @@ function ingestScan(raw) {
                                 ? (modelData.thumb ? Util.fileUrl(modelData.thumb) : "")
                                 : Util.fileUrl(modelData.path)
                               fillMode: Image.PreserveAspectCrop
-                              clip: true
                               asynchronous: true
+                              visible: false
+                              layer.enabled: true
                               onStatusChanged: {
                                 if (status === Image.Error) tile.broken = true
                                 else if (status === Image.Ready) {
@@ -1449,6 +1528,29 @@ function ingestScan(raw) {
                                   }
                                 }
                               }
+                            }
+
+                            // Máscara redondeada: mismo radio que la tarjeta
+                            // (solo arriba; abajo lo cubre la barra de título).
+                            Rectangle {
+                              id: thumbMask
+                              anchors.fill: shot
+                              topLeftRadius: 12
+                              topRightRadius: 12
+                              bottomLeftRadius: 0
+                              bottomRightRadius: 0
+                              color: "white"
+                              visible: false
+                              layer.enabled: true
+                            }
+
+                            MultiEffect {
+                              anchors.fill: shot
+                              source: shot
+                              maskEnabled: true
+                              maskSource: thumbMask
+                              maskThresholdMin: 0.5
+                              maskSpreadAtMin: 0.02
                             }
 
                             // Badge de tipo: imagen (ámbar) o vídeo (acento)
@@ -1545,6 +1647,8 @@ function ingestScan(raw) {
                             anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
                             height: 26
                             color: Util.alpha(Color.background, 0.25)
+                            bottomLeftRadius: 12
+                            bottomRightRadius: 12
                             Text {
                               anchors {
                                 left: parent.left; right: parent.right
@@ -2039,6 +2143,7 @@ function ingestScan(raw) {
     root.scan()
     root.readCurrent()
     root.resumePausedOnStart()
+    root.loadThemeList()
     Qt.callLater(root.maybeRestoreVideo)
     console.log("[picker.WM] listo, fondos=" + root.themeDir)
     console.log("[picker.WM] tema: " + root.themeName

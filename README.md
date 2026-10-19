@@ -12,7 +12,7 @@ Plugin de [Omarchy](https://omarchy.org/) para navegar, aplicar, importar y elim
 - ✅ **Pausa automática**: si una ventana tapa casi todo un monitor, el vídeo se pausa solo y vuelve al despejarse.
 - ✅ **Persistencia**: el fondo aplicado sobrevive a reinicios y cambios de workspace.
 - ✅ **Importa** fondos con `zenity` y **elimina** los tuyos moviéndolos a la papelera.
-- ✅ **Filtros** por tipo (todos / vídeos / imágenes) y **píldora del tema**: clic alterna catppuccin ↔ dark-carbon.
+- ✅ **Filtros** por tipo (todos / vídeos / imágenes) y **selector de tema**: tema actual | OTHER THEMES (lista de temas instalados).
 - ✅ Se integra con el sistema: si cambias el fondo por el switcher de Omarchy, el plugin se aparta.
 - ✅ Se **adapta al tema activo**: colores, acentos y bordes se re-tematizan en vivo.
 - ✅ Panel **arrastrable**; al abrir aparece centrado en el monitor activo.
@@ -65,7 +65,7 @@ Dentro del panel:
 
 - **Clic en una miniatura** → la selecciona.
 - **Filtros TODOS / VIDEOS / IMÁGENES** → muestra solo ese tipo (el contador de TODOS es el total).
-- **Píldora del tema** (arriba a la derecha) → clic alterna entre catppuccin y dark-carbon.
+- **Selector de tema** (arriba a la derecha) → muestra el tema activo y **OTHER THEMES** abre la lista de temas instalados; elegir uno aplica `omarchy-theme-set`.
 - **APPLY** → aplica la imagen o lanza el vídeo en el monitor elegido.
 - **IMPORT** → elige un archivo con `zenity`; se instala en la carpeta del tema actual.
 - **DELETE** → confirma y elimina el fondo seleccionado (tus fondos por tema y los del tema propio; los de `/usr/share` quedan protegidos). También borra la copia materializada y su estado.
