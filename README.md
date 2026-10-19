@@ -12,6 +12,7 @@ Plugin de [Omarchy](https://omarchy.org/) para navegar, aplicar, importar y elim
 - ✅ **Pausa automática**: si una ventana tapa casi todo un monitor, el vídeo se pausa solo y vuelve al despejarse.
 - ✅ **Persistencia**: el fondo aplicado sobrevive a reinicios y cambios de workspace.
 - ✅ **Importa** fondos con `zenity` y **elimina** los tuyos moviéndolos a la papelera.
+- ✅ **Filtros** por tipo (todos / vídeos / imágenes) y **píldora del tema**: clic alterna catppuccin ↔ dark-carbon.
 - ✅ Se integra con el sistema: si cambias el fondo por el switcher de Omarchy, el plugin se aparta.
 - ✅ Se **adapta al tema activo**: colores, acentos y bordes se re-tematizan en vivo.
 - ✅ Panel **arrastrable**; al abrir aparece centrado en el monitor activo.
@@ -63,9 +64,11 @@ omarchy shell madmasx.wallpaper-picker scan      # forzar reescaneo
 Dentro del panel:
 
 - **Clic en una miniatura** → la selecciona.
+- **Filtros TODOS / VIDEOS / IMÁGENES** → muestra solo ese tipo (el contador de TODOS es el total).
+- **Píldora del tema** (arriba a la derecha) → clic alterna entre catppuccin y dark-carbon.
 - **APPLY** → aplica la imagen o lanza el vídeo en el monitor elegido.
 - **IMPORT** → elige un archivo con `zenity`; se instala en la carpeta del tema actual.
-- **DELETE** → confirma y mueve a la papelera el fondo seleccionado (solo los del tema del usuario).
+- **DELETE** → confirma y elimina el fondo seleccionado (tus fondos por tema y los del tema propio; los de `/usr/share` quedan protegidos). También borra la copia materializada y su estado.
 - **AUTO / OFF** → activa o desactiva la pausa automática cuando una ventana tapa el monitor.
 - **♪ ON/OFF** → sonido del vídeo (silenciado por defecto).
 - **⟳** → reescanea las carpetas de fondos.
@@ -86,8 +89,9 @@ Recarga Hyprland con `hyprctl reload` o cierra sesión.
 El plugin lee las mismas rutas que usa Omarchy, así que lo que ves en el switcher aparece en el panel:
 
 1. `~/.config/omarchy/backgrounds/<tema>/` — tus fondos por tema.
-2. `~/.local/state/omarchy/current/theme/backgrounds/` — los del tema aplicado.
-3. `/usr/share/omarchy/themes/<tema>/backgrounds/` — los de sistema.
+2. `~/.config/omarchy/themes/<tema>/backgrounds/` — fondos propios del tema (borrables).
+3. `~/.local/state/omarchy/current/theme/backgrounds/` — los del tema aplicado.
+4. `/usr/share/omarchy/themes/<tema>/backgrounds/` — los de sistema.
 
 Se deduplican por nombre y se ignoran las descargas incompletas (`.part`, `.crdownload`).
 
@@ -125,7 +129,7 @@ Se ejecuta **únicamente** desde `install.sh`, **solo si falta** `mpvpaper` o `s
 
 ### Comandos que invoca
 
-`omarchy plugin enable`, `omarchy restart shell`, `mpvpaper`, `pkill`, `hyprctl`, `ffmpeg`, `gio trash`, `socat`.
+`omarchy plugin enable`, `omarchy restart shell`, `omarchy-theme-set`, `mpvpaper`, `pkill`, `hyprctl`, `ffmpeg`, `gio trash`, `socat`.
 
 ### Lo que nunca hace
 

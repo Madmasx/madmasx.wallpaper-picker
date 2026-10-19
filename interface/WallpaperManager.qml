@@ -5,6 +5,7 @@ import Quickshell.Hyprland
 import QtQuick 6.11
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Effects
 import qs.Commons
 
 Item {
@@ -19,13 +20,22 @@ Item {
   property string themeName: ""
   // Omarchy guarda los fondos del usuario en ~/.config/omarchy/backgrounds/<tema>/
   // y los del tema ya aplicado en ~/.local/state/omarchy/current/theme/backgrounds/.
-  // El plugin historically miraba themes/<tema>/backgrounds, que Omarchy NO usa:
-  // hay que leer las dos rutas para no dejar temas fuera.
+  // Los temas propios (como dark-carbon) guardan sus fondos en
+  // ~/.config/omarchy/themes/<tema>/backgrounds/; también se listan para poder
+  // borrarlos desde el picker.
   readonly property string userBgDir: root.home + "/.config/omarchy/backgrounds/" + root.themeName
+  readonly property string themeUserDir: root.home + "/.config/omarchy/themes/" + root.themeName + "/backgrounds"
   readonly property string liveBgDir: root.stateHome + "/omarchy/current/theme/backgrounds"
   readonly property string themeDir: root.userBgDir
   readonly property string themeSysDir: "/usr/share/omarchy/themes/" + root.themeName + "/backgrounds"
   property var images: []
+  property string filterKind: "all"
+  readonly property int visibleCount: {
+    var c = 0
+    for (var i = 0; i < root.images.length; i++)
+      if (root.filterKind === "all" || root.images[i].kind === root.filterKind) c++
+    return c
+  }
   property var monitors: []
   property string currentMonitor: ""
   property int currentIndex: -1
@@ -39,6 +49,7 @@ Item {
 
   // Pausa automática del vídeo cuando una ventana tapa el monitor.
   property bool autoPause: true
+  property bool autoPauseWriting: false
   property var pausedNow: ({})
   readonly property string ipcDir: root.stateHome
     + "/omarchy/plugins/madmasx.wallpaper-picker/ipc"
@@ -100,6 +111,7 @@ Item {
   function isRemovable(item) {
     if (!item) return false
     return item.path.indexOf(root.userBgDir) === 0
+      || item.path.indexOf(root.themeUserDir) === 0
       || item.path.indexOf(root.themeDir) === 0
   }
   // Mata el mpvpaper del monitor M, pero SOLO el que lanzó este plugin.
@@ -180,13 +192,13 @@ Item {
     if (!root.themeName) return
     if (root.scanning) { root.rescanPending = true; return }
     root.scanning = true
-    console.log("[picker.WM] scan user=" + root.userBgDir + " live=" + root.liveBgDir
-      + " sys=" + root.themeSysDir)
-    // Omarchy precedence: backgrounds/<tema> y current/theme/backgrounds.
-    // Se listan los tres y se deduplica por nombre en ingestScan.
+    console.log("[picker.WM] scan user=" + root.userBgDir + " theme=" + root.themeUserDir
+      + " live=" + root.liveBgDir + " sys=" + root.themeSysDir)
+    // Omarchy precedence: backgrounds/<tema>, themes/<tema>/backgrounds y
+    // current/theme/backgrounds. Se deduplica por nombre en ingestScan.
     scanProc.command = ["bash", "-c",
-      "for d in " + root.shq(root.userBgDir) + " " + root.shq(root.liveBgDir) + " "
-      + root.shq(root.themeSysDir) + "; do "
+      "for d in " + root.shq(root.userBgDir) + " " + root.shq(root.themeUserDir) + " "
+      + root.shq(root.liveBgDir) + " " + root.shq(root.themeSysDir) + "; do "
       + "[ -d \"$d\" ] || continue; "
       + "for f in \"$d\"/*; do "
       + "[ -f \"$f\" ] || continue; "
@@ -322,6 +334,13 @@ function ingestScan(raw) {
         // Re-sincroniza el resaltado con el fondo realmente aplicado.
         root.matchCurrent()
       }
+    }
+  }
+
+  Process {
+    id: themeProc
+    onExited: function(code) {
+      if (code !== 0) console.warn("[picker.WM] no se pudo cambiar el tema (exit " + code + ")")
     }
   }
 
@@ -677,10 +696,26 @@ function ingestScan(raw) {
     }
   }
 
+  function resumePaused() {
+    var resume = []
+    for (var m in root.pausedNow)
+      if (root.pausedNow[m]) resume.push(m)
+    if (!resume.length) return
+    var changes = []
+    for (var i = 0; i < resume.length; i++) changes.push([resume[i], false])
+    root.sendPauses(changes)
+    console.log("[picker.WM] pausa automática: reanudando " + resume.join(", "))
+    root.pausedNow = {}
+  }
+
   function setAutoPause(on) {
+    // Al desactivar, reanuda los vídeos que la pausa automática dejó pausados;
+    // si no, se quedaban congelados hasta reaplicar el fondo.
+    if (!on) root.resumePaused()
     root.autoPause = !!on
     // OJO: proceso aparte del de lectura. Si compartieran, el collector de
     // salida (vacía al guardar) volvía a poner autoPause=false al instante.
+    root.autoPauseWriting = true
     autoPauseSaveProc.command = ["bash", "-c",
       "d=" + root.shq(root.autoPauseFile) + "; mkdir -p \"$(dirname \"$d\")\"; "
       + "if [ " + (root.autoPause ? "1" : "0") + " = 1 ]; then rm -f \"$d\"; else echo 0 > \"$d\"; fi"]
@@ -691,23 +726,55 @@ function ingestScan(raw) {
   }
 
   // Sin archivo = activado (default). El archivo solo existe si el usuario la
-  // desactivó explícitamente.
-  function loadAutoPause() {
-    autoPauseProc.command = ["bash", "-c",
-      "[ -f " + root.shq(root.autoPauseFile) + " ] && echo 0 || echo 1"]
-    autoPauseProc.running = true
+  // desactivó explícitamente. FileView + Timer mantiene el estado sincronizado
+  // entre las instancias del widget (una por monitor).
+  function applyAutoPauseState(on) {
+    if (root.autoPauseWriting) return
+    if (root.autoPause === on) return
+    root.autoPause = on
+    if (!on) root.resumePaused()
+    else Qt.callLater(root.evalCover)
+  }
+
+  FileView {
+    id: autoPauseView
+    path: root.autoPauseFile
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.applyAutoPauseState(false)
+    onLoadFailed: root.applyAutoPauseState(true)
+  }
+
+  Timer {
+    id: autoPauseSync
+    interval: 2000
+    repeat: true
+    running: true
+    onTriggered: autoPauseView.reload()
   }
 
   Process {
     id: autoPauseSaveProc
+    onExited: root.autoPauseWriting = false
+  }
+
+  // Al arrancar (o tras un reload), reanuda cualquier vídeo que quedara
+  // pausado por la pausa automática antes de cerrar.
+  function resumePausedOnStart() {
+    resumeProc.command = ["bash", "-c",
+      "st=" + root.shq(root.videoStateFile) + "; "
+      + "[ -f \"$st\" ] || exit 0; "
+      + "while IFS=$'\\t' read -r mon path snd img; do "
+      + "[ -n \"$mon\" ] || continue; "
+      + "sock=" + root.shq(root.ipcDir) + "/$(printf '%s' \"$mon\" | tr -c 'A-Za-z0-9._-' '_').sock; "
+      + "printf '{\"command\":[\"set\",\"pause\",\"no\"]}\\n' | socat - UNIX-CONNECT:\"$sock\" 2>/dev/null; "
+      + "done < \"$st\""]
+    resumeProc.running = true
   }
 
   Process {
-    id: autoPauseProc
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: root.autoPause = String(text || "").trim() === "1"
-    }
+    id: resumeProc
   }
 
   Process {
@@ -811,20 +878,22 @@ function ingestScan(raw) {
     console.log("[picker.WM] eliminar: " + path)
     removeProc.command = ["bash", "-c",
       "st=" + root.shq(root.videoStateFile) + "; p=" + root.shq(path) + "; "
+      + "live=" + root.shq(root.liveBgDir + "/" + name) + "; "
       + "if [ -f \"$st\" ]; then "
       + "while IFS=$'\\t' read -r vmon vpath vsnd vimg; do "
-      + "[ \"$vpath\" = \"$p\" ] && { "
+      + "{ [ \"$vpath\" = \"$p\" ] || [ \"$vpath\" = \"$live\" ]; } && { "
       + "vm=$(printf '%s' \"$vmon\" | sed 's/[][^$.*/]/\\\\&/g'); "
       + "pkill -9 -f \"^mpvpaper .*madmasx[.]wallpaper-picker/ipc.* $vm /\" 2>/dev/null; "
       + "rm -f " + root.shq(root.ipcDir) + "/$(printf '%s' \"$vmon\" | tr -c 'A-Za-z0-9._-' '_').sock; "
       + "echo '[picker.WM] vídeo borrado: '\"$vmon\"''; }; "
       + "done < \"$st\"; "
-      + "awk -F'\t' -v p=\"$p\" 'NF>=4 && $2!=p' \"$st\" > \"$st.tmp\" && mv \"$st.tmp\" \"$st\"; "
+      + "awk -F'\t' -v p=\"$p\" -v l=\"$live\" 'NF>=4 && $2!=p && $2!=l' \"$st\" > \"$st.tmp\" && mv \"$st.tmp\" \"$st\"; "
       + "[ -s \"$st\" ] || rm -f \"$st\"; "
       + "fi; "
       + "rm -f " + root.shq(root.thumbsDir + "/" + name + ".jpg") + "; "
       + "if command -v gio >/dev/null 2>&1; then gio trash -f \"$p\" 2>/dev/null; else rm -f \"$p\"; fi; "
       + "[ -e \"$p\" ] && { echo 'ERROR no se pudo eliminar'; exit 1; }; "
+      + "[ \"$live\" != \"$p\" ] && rm -f \"$live\"; "
       + "[ -s \"$st\" ] && echo UP || { rm -f \"$st\"; echo DOWN; }"]
     removeProc.running = true
   }
@@ -869,13 +938,16 @@ function ingestScan(raw) {
   // el escritorio en cualquier tema. Solo el rojo de DELETE es fijo: es un
   // color destructivo, no existe equivalente en los temas.
   readonly property string dBg: Color.popups.background
-  readonly property string dSurface: Qt.rgba(1, 1, 1, 0.045)
-  readonly property string dSurfaceHi: Qt.rgba(1, 1, 1, 0.085)
+  readonly property color dSurface: Util.alpha(Color.foreground, 0.04)
+  readonly property color dSurfaceHi: Util.alpha(Color.foreground, 0.08)
   readonly property string dAccent: Color.accent
   readonly property string dText: Color.popups.text
   readonly property string dMuted: Color.muted
-  readonly property string dDanger: "#ff4d5a"
+  readonly property string dDanger: "#ef4444"
+  readonly property string dSuccess: "#22c55e"
   readonly property string dBorder: Color.popups.border
+  readonly property color dAccentGlow: Util.alpha(Color.accent, 0.35)
+  readonly property color dDangerGlow: Util.alpha("#ef4444", 0.35)
   // Solo para el desplegable de monitor: el fondo del tema puede venir
   // translúcido y entonces la lista abierta era casi ilegible.
   readonly property color dPanel: Util.alpha(Color.popups.background, 1)
@@ -898,8 +970,9 @@ function ingestScan(raw) {
     for (var i = 0; i < cols; i++) { buckets.push([]); heights.push(0) }
     for (var n = 0; n < root.images.length; n++) {
       var it = root.images[n]
+      if (root.filterKind !== "all" && it.kind !== root.filterKind) continue
       var ar = (it && it.ar > 0.2) ? it.ar : 1.7778
-      var h = colW / ar + 22
+      var h = colW / ar + 26
       var shortest = 0
       for (var c = 1; c < cols; c++) if (heights[c] < heights[shortest]) shortest = c
       it.__idx = n            // índice global: el masonry reordena, la
@@ -921,6 +994,22 @@ function ingestScan(raw) {
   function queueMasonry() {
     masonryTimer.restart()
     root.relayoutMasonry()
+  }
+
+  function setFilter(kind) {
+    if (root.filterKind === kind) return
+    root.filterKind = kind
+    root.currentIndex = -1
+    root.queueMasonry()
+  }
+
+  // Alterna los dos temas del mockup. omarchy-theme-set cambia el tema real
+  // (colores + fondos); el plugin se recarga solo al detectar theme.name.
+  function toggleTheme() {
+    var next = root.themeName.trim().toLowerCase() === "catppuccin" ? "dark-carbon" : "catppuccin"
+    console.log("[picker.WM] cambiar tema → " + next)
+    themeProc.command = ["omarchy-theme-set", next]
+    themeProc.running = true
   }
 
   // ---------- ventana del panel ----------
@@ -964,7 +1053,7 @@ function ingestScan(raw) {
         id: card
         width: 620
         height: 664
-        radius: 20
+        radius: 16
         color: root.dBg
         border { color: root.dBorder; width: 1 }
         clip: true
@@ -976,7 +1065,7 @@ function ingestScan(raw) {
         Rectangle {
           anchors.fill: parent
           anchors.margins: 1
-          radius: 19
+          radius: 15
           color: "transparent"
           border { color: Util.alpha(root.dText, 0.05); width: 1 }
           z: -1
@@ -984,6 +1073,24 @@ function ingestScan(raw) {
 
         // Tragador de clicks: sólo el scrim cierra el panel.
         MouseArea { anchors.fill: parent; onClicked: {} }
+
+        // Asa de arrastre: va DEBAJO del contenido para que los controles de
+        // la cabecera (p. ej. la píldora del tema) sigan recibiendo clics.
+        MouseArea {
+          anchors.top: parent.top
+          anchors.left: parent.left
+          anchors.right: parent.right
+          height: 46
+          cursorShape: drag.active ? Qt.ClosedHandCursor : Qt.OpenHandCursor
+          drag.target: card
+          drag.axis: Drag.XAndYAxis
+          drag.minimumX: 0
+          drag.minimumY: 0
+          drag.maximumX: panel.width - card.width
+          drag.maximumY: panel.height - card.height
+          drag.threshold: 6
+          drag.smoothed: true
+        }
 
         ColumnLayout {
           anchors.fill: parent
@@ -993,49 +1100,225 @@ function ingestScan(raw) {
           // ---------- cabecera ----------
           Item {
             Layout.fillWidth: true
-            height: 44
+            height: 48
 
-            Column {
+            RowLayout {
               anchors.left: parent.left
               anchors.verticalCenter: parent.verticalCenter
-              spacing: 2
-              Text {
-                text: "WALLPAPER PICKER"
-                font.pixelSize: 19
-                font.bold: true
-                font.letterSpacing: 3.4
-                textFormat: Text.PlainText
-                color: root.dText
+              spacing: 10
+
+              Item {
+                Layout.alignment: Qt.AlignVCenter
+                width: 20
+                height: 20
+                Image {
+                  id: cubeSrc
+                  anchors.fill: parent
+                  source: Qt.resolvedUrl("icons/cube.svg")
+                  sourceSize { width: 40; height: 40 }
+                  visible: false
+                  smooth: true
+                }
+                MultiEffect {
+                  anchors.fill: parent
+                  source: cubeSrc
+                  colorization: 1.0
+                  colorizationColor: root.dText
+                }
               }
-              Text {
-                text: "CYBER WALLPAPER ENGINE"
-                font.pixelSize: 8
-                font.letterSpacing: 2.2
-                textFormat: Text.PlainText
-                color: root.dMuted
+
+              Column {
+                Layout.alignment: Qt.AlignVCenter
+                spacing: 2
+                Text {
+                  text: "WALLPAPER PICKER"
+                  font.pixelSize: 18
+                  font.weight: Font.ExtraBold
+                  font.letterSpacing: 2
+                  textFormat: Text.PlainText
+                  color: root.dText
+                }
+                Text {
+                  text: "CYBER WALLPAPER ENGINE"
+                  font.pixelSize: 9
+                  font.weight: Font.DemiBold
+                  font.letterSpacing: 3
+                  textFormat: Text.PlainText
+                  color: root.dMuted
+                }
               }
             }
 
-            // Etiqueta del tema
+            // Etiqueta del tema: píldora con punto de acento (como el mockup).
+            // Clic = alterna catppuccin ↔ dark-carbon (como el mockup HTML).
             Rectangle {
+              id: themeBadge
               anchors.right: parent.right
               anchors.verticalCenter: parent.verticalCenter
-              height: 24
-              width: tagLabel.implicitWidth + 20
-              radius: 12
-              color: Util.alpha(root.dAccent, 0.10)
-              border { color: Util.alpha(root.dAccent, 0.35); width: 1 }
-              Text {
-                id: tagLabel
+              height: 28
+              width: tagRow.implicitWidth + 24
+              radius: 14
+              color: themeBadge.badgeHover ? root.dSurfaceHi : root.dSurface
+              border { color: themeBadge.badgeHover ? root.dAccent : root.dBorder; width: 1 }
+              property bool badgeHover: false
+
+              RowLayout {
+                id: tagRow
                 anchors.centerIn: parent
-                text: (root.themeName.trim() || "?").toUpperCase()
-                font.pixelSize: 9
-                font.bold: true
-                font.letterSpacing: 1.4
-                textFormat: Text.PlainText
-                color: root.dAccent
+                spacing: 7
+                Rectangle {
+                  Layout.alignment: Qt.AlignVCenter
+                  width: 7
+                  height: 7
+                  radius: 3.5
+                  color: root.dAccent
+                }
+                Text {
+                  Layout.alignment: Qt.AlignVCenter
+                  text: (root.themeName.trim() || "?").toUpperCase()
+                  font.pixelSize: 10
+                  font.weight: Font.Bold
+                  font.letterSpacing: 1.5
+                  textFormat: Text.PlainText
+                  color: root.dText
+                }
+              }
+
+              MouseArea {
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onEntered: themeBadge.badgeHover = true
+                onExited: themeBadge.badgeHover = false
+                onClicked: root.toggleTheme()
               }
             }
+          }
+
+          // ---------- filtros ----------
+          RowLayout {
+            Layout.fillWidth: true
+            spacing: 8
+
+            // TODOS (n)
+            Rectangle {
+              height: 30
+              radius: 8
+              width: allLabel.implicitWidth + 24
+              color: root.filterKind === "all" ? root.dSurface : "transparent"
+              border { color: root.filterKind === "all" ? root.dBorder : "transparent"; width: 1 }
+              Text {
+                id: allLabel
+                anchors.centerIn: parent
+                text: "TODOS (" + root.images.length + ")"
+                font.pixelSize: 10
+                font.weight: Font.DemiBold
+                font.letterSpacing: 1.2
+                textFormat: Text.PlainText
+                color: root.filterKind === "all" ? root.dAccent : root.dMuted
+              }
+              MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.setFilter("all")
+              }
+            }
+
+            // VIDEOS
+            Rectangle {
+              height: 30
+              radius: 8
+              width: videoFilterRow.implicitWidth + 24
+              color: root.filterKind === "video" ? root.dSurface : "transparent"
+              border { color: root.filterKind === "video" ? root.dBorder : "transparent"; width: 1 }
+              RowLayout {
+                id: videoFilterRow
+                anchors.centerIn: parent
+                spacing: 5
+                Item {
+                  Layout.alignment: Qt.AlignVCenter
+                  width: 12
+                  height: 12
+                  Image {
+                    id: playSrc
+                    anchors.fill: parent
+                    source: Qt.resolvedUrl("icons/play.svg")
+                    sourceSize { width: 24; height: 24 }
+                    visible: false
+                    smooth: true
+                  }
+                  MultiEffect {
+                    anchors.fill: parent
+                    source: playSrc
+                    colorization: 1.0
+                    colorizationColor: root.filterKind === "video" ? root.dAccent : root.dMuted
+                  }
+                }
+                Text {
+                  Layout.alignment: Qt.AlignVCenter
+                  text: "VIDEOS"
+                  font.pixelSize: 10
+                  font.weight: Font.DemiBold
+                  font.letterSpacing: 1.2
+                  textFormat: Text.PlainText
+                  color: root.filterKind === "video" ? root.dAccent : root.dMuted
+                }
+              }
+              MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.setFilter("video")
+              }
+            }
+
+            // IMÁGENES
+            Rectangle {
+              height: 30
+              radius: 8
+              width: imageFilterRow.implicitWidth + 24
+              color: root.filterKind === "image" ? root.dSurface : "transparent"
+              border { color: root.filterKind === "image" ? root.dBorder : "transparent"; width: 1 }
+              RowLayout {
+                id: imageFilterRow
+                anchors.centerIn: parent
+                spacing: 5
+                Item {
+                  Layout.alignment: Qt.AlignVCenter
+                  width: 12
+                  height: 12
+                  Image {
+                    id: imageSrc
+                    anchors.fill: parent
+                    source: Qt.resolvedUrl("icons/image.svg")
+                    sourceSize { width: 24; height: 24 }
+                    visible: false
+                    smooth: true
+                  }
+                  MultiEffect {
+                    anchors.fill: parent
+                    source: imageSrc
+                    colorization: 1.0
+                    colorizationColor: root.filterKind === "image" ? root.dAccent : root.dMuted
+                  }
+                }
+                Text {
+                  Layout.alignment: Qt.AlignVCenter
+                  text: "IMÁGENES"
+                  font.pixelSize: 10
+                  font.weight: Font.DemiBold
+                  font.letterSpacing: 1.2
+                  textFormat: Text.PlainText
+                  color: root.filterKind === "image" ? root.dAccent : root.dMuted
+                }
+              }
+              MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.setFilter("image")
+              }
+            }
+
+            Item { Layout.fillWidth: true }
           }
 
           // ---------- masonry ----------
@@ -1045,10 +1328,15 @@ function ingestScan(raw) {
             clip: true
 
             Text {
-              visible: root.images.length === 0
+              visible: root.visibleCount === 0
               anchors.centerIn: parent
               width: parent.width - 40
-              text: "No wallpapers for [" + root.themeName.trim() + "]\nImport one with IMPORT and it will be used in this theme."
+              text: root.visibleCount === 0
+                ? (root.filterKind === "all"
+                    ? "No wallpapers for [" + root.themeName.trim() + "]\nImport one with IMPORT and it will be used in this theme."
+                    : "No " + (root.filterKind === "video" ? "videos" : "images")
+                      + " in [" + root.themeName.trim() + "]")
+                : ""
               font.pixelSize: 11
               lineHeight: 1.4
               textFormat: Text.PlainText
@@ -1059,7 +1347,7 @@ function ingestScan(raw) {
 
             Flickable {
               id: flick
-              visible: root.images.length > 0
+              visible: root.visibleCount > 0
               anchors.fill: parent
               contentWidth: width
               contentHeight: colRow.height
@@ -1086,21 +1374,21 @@ function ingestScan(raw) {
                         required property var modelData
                         required property int index
                         width: root.masonryColW
-                        height: (root.masonryColW / ((modelData.ar > 0.2) ? modelData.ar : 1.7778)) + 22
+                        height: (root.masonryColW / ((modelData.ar > 0.2) ? modelData.ar : 1.7778)) + 26
 
                         // Índice real dentro de root.images (lo fija relayoutMasonry)
                         readonly property int globalIndex: (modelData && modelData.__idx !== undefined)
                           ? modelData.__idx : -1
 
                         // Halo exterior (glow) al pasar el ratón o al estar
-                        // elegido. Va antes que el tile para quedar detrás.
+                        // elegido. Va antes que la tarjeta para quedar detrás.
                         Rectangle {
                           id: tileGlow
-                          anchors.fill: parent
-                          anchors.bottomMargin: 22
+                          anchors.fill: tile
                           anchors.margins: -3
                           radius: 15
                           color: "transparent"
+                          transform: Translate { y: tile.lift }
                           border {
                             width: 2
                             color: Util.alpha(root.dAccent,
@@ -1109,21 +1397,168 @@ function ingestScan(raw) {
                           }
                         }
 
+                        // Tarjeta: superficie, borde redondeado y barra de título
+                        // (mismo lenguaje visual que el mockup HTML).
                         Rectangle {
                           id: tile
                           anchors.fill: parent
-                          anchors.bottomMargin: 22
                           radius: 12
-                          clip: true
-                          color: root.dSurface
+                          color: tileHover.hovered ? root.dSurfaceHi : root.dSurface
                           border {
                             width: 1
                             color: (cell.globalIndex === root.currentIndex)
                               ? root.dAccent
-                              : (tileHover.hovered ? Util.alpha(root.dAccent, 0.45) : root.dBorder)
+                              : (tileHover.hovered ? Util.alpha(root.dText, 0.2) : root.dBorder)
                           }
+                          clip: true
                           property bool broken: false
                           property bool selected: cell.globalIndex === root.currentIndex
+                          property real lift: tileHover.hovered ? -3 : 0
+                          Behavior on lift { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
+
+                          // Pequeño salto al pasar el ratón, como el mockup.
+                          transform: Translate { y: tile.lift }
+
+                          Item {
+                            id: thumbWrap
+                            anchors { top: parent.top; left: parent.left; right: parent.right; bottom: titleBar.top }
+                            clip: true
+
+                            Image {
+                              id: shot
+                              anchors.fill: parent
+                              anchors.margins: 1
+                              source: modelData.kind === "video"
+                                ? (modelData.thumb ? Util.fileUrl(modelData.thumb) : "")
+                                : Util.fileUrl(modelData.path)
+                              fillMode: Image.PreserveAspectCrop
+                              clip: true
+                              asynchronous: true
+                              onStatusChanged: {
+                                if (status === Image.Error) tile.broken = true
+                                else if (status === Image.Ready) {
+                                  tile.broken = false
+                                  var sw = shot.sourceSize.width
+                                  var sh = shot.sourceSize.height
+                                  if (sw > 0 && sh > 0) {
+                                    var r = sw / sh
+                                    if (Math.abs(r - (modelData.ar || 0)) > 0.02) {
+                                      modelData.ar = r
+                                      root.queueMasonry()
+                                    }
+                                  }
+                                }
+                              }
+                            }
+
+                            // Badge de tipo: imagen (ámbar) o vídeo (acento)
+                            Rectangle {
+                              visible: modelData.kind === "image"
+                              anchors { top: parent.top; topMargin: 7; left: parent.left; leftMargin: 7 }
+                              width: 22; height: 22; radius: 6
+                              color: Util.alpha("#f9e2af", 0.22)
+                              border { color: Util.alpha("#f9e2af", 0.5); width: 1 }
+                              Item {
+                                anchors.centerIn: parent
+                                width: 12
+                                height: 12
+                                Image {
+                                  id: badgeImageSrc
+                                  anchors.fill: parent
+                                  source: Qt.resolvedUrl("icons/image.svg")
+                                  sourceSize { width: 24; height: 24 }
+                                  visible: false
+                                  smooth: true
+                                }
+                                MultiEffect {
+                                  anchors.fill: parent
+                                  source: badgeImageSrc
+                                  colorization: 1.0
+                                  colorizationColor: "#f9e2af"
+                                }
+                              }
+                            }
+
+                            Rectangle {
+                              visible: modelData.kind === "video" && !tile.broken
+                              anchors { top: parent.top; topMargin: 7; left: parent.left; leftMargin: 7 }
+                              width: 22; height: 22; radius: 6
+                              color: Util.alpha(root.dAccent, 0.22)
+                              border { color: Util.alpha(root.dAccent, 0.5); width: 1 }
+                              Item {
+                                anchors.centerIn: parent
+                                width: 10
+                                height: 10
+                                Image {
+                                  id: badgePlaySrc
+                                  anchors.fill: parent
+                                  source: Qt.resolvedUrl("icons/play.svg")
+                                  sourceSize { width: 20; height: 20 }
+                                  visible: false
+                                  smooth: true
+                                }
+                                MultiEffect {
+                                  anchors.fill: parent
+                                  source: badgePlaySrc
+                                  colorization: 1.0
+                                  colorizationColor: root.dAccent
+                                }
+                              }
+                            }
+
+                            // Vídeo sin miniatura
+                            Rectangle {
+                              visible: modelData.kind === "video" && tile.broken
+                              anchors.fill: parent
+                              anchors.margins: 1
+                              radius: 11
+                              color: root.dSurfaceHi
+                              Text {
+                                anchors.centerIn: parent
+                                text: "▶"
+                                font.pixelSize: 22
+                                textFormat: Text.PlainText
+                                color: Util.alpha(root.dAccent, 0.7)
+                              }
+                            }
+
+                            // Aviso de imagen rota
+                            Rectangle {
+                              visible: modelData.kind === "image" && tile.broken
+                              anchors.fill: parent
+                              anchors.margins: 1
+                              radius: 11
+                              color: root.dSurfaceHi
+                              Text {
+                                anchors.centerIn: parent
+                                text: "⚠"
+                                font.pixelSize: 18
+                                textFormat: Text.PlainText
+                                color: root.dMuted
+                              }
+                            }
+                          }
+
+                          // Barra de título (debajo de la miniatura)
+                          Rectangle {
+                            id: titleBar
+                            anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
+                            height: 26
+                            color: Util.alpha(Color.background, 0.25)
+                            Text {
+                              anchors {
+                                left: parent.left; right: parent.right
+                                verticalCenter: parent.verticalCenter
+                                leftMargin: 10; rightMargin: 10
+                              }
+                              text: cell.modelData.name
+                              font.pixelSize: 10
+                              font.weight: tile.selected ? Font.DemiBold : Font.Normal
+                              textFormat: Text.PlainText
+                              elide: Text.ElideMiddle
+                              color: tile.selected ? root.dText : root.dMuted
+                            }
+                          }
 
                           MouseArea {
                             id: tileHover
@@ -1132,105 +1567,6 @@ function ingestScan(raw) {
                             cursorShape: Qt.PointingHandCursor
                             onClicked: root.currentIndex = cell.globalIndex
                           }
-
-                          Image {
-                            id: shot
-                            anchors.fill: parent
-                            anchors.margins: 1
-                            source: modelData.kind === "video"
-                              ? (modelData.thumb ? Util.fileUrl(modelData.thumb) : "")
-                              : Util.fileUrl(modelData.path)
-                            fillMode: Image.PreserveAspectCrop
-                            clip: true
-                            asynchronous: true
-                            onStatusChanged: {
-                              if (status === Image.Error) tile.broken = true
-                              else if (status === Image.Ready) {
-                                tile.broken = false
-                                var sw = shot.sourceSize.width
-                                var sh = shot.sourceSize.height
-                                if (sw > 0 && sh > 0) {
-                                  var r = sw / sh
-                                  if (Math.abs(r - (modelData.ar || 0)) > 0.02) {
-                                    modelData.ar = r
-                                    root.queueMasonry()
-                                  }
-                                }
-                              }
-                            }
-                          }
-
-                          // Icono de tipo: vídeo (play) o imagen
-                          Rectangle {
-                            visible: modelData.kind === "image"
-                            anchors { top: parent.top; topMargin: 7; left: parent.left; leftMargin: 7 }
-                            width: 18; height: 18; radius: 9
-                            color: Util.alpha(Color.background, 0.65)
-                            border { color: Util.alpha(root.dText, 0.25); width: 1 }
-                            Text {
-                              anchors.centerIn: parent
-                              text: "🖼"
-                              font.pixelSize: 9
-                              textFormat: Text.PlainText
-                            }
-                          }
-
-                          Rectangle {
-                            visible: modelData.kind === "video" && tile.broken
-                            anchors.fill: parent
-                            anchors.margins: 1
-                            radius: 11
-                            color: root.dSurfaceHi
-                            Text {
-                              anchors.centerIn: parent
-                              text: "▶"
-                              font.pixelSize: 22
-                              textFormat: Text.PlainText
-                              color: Util.alpha(root.dAccent, 0.7)
-                            }
-                          }
-
-                          Rectangle {
-                            visible: modelData.kind === "video" && !tile.broken
-                            anchors { top: parent.top; topMargin: 7; left: parent.left; leftMargin: 7 }
-                            width: 18; height: 18; radius: 9
-                            color: Util.alpha(Color.background, 0.65)
-                            border { color: Util.alpha(root.dAccent, 0.5); width: 1 }
-                            Text {
-                              anchors.centerIn: parent
-                              text: "▶"
-                              font.pixelSize: 8
-                              textFormat: Text.PlainText
-                              color: root.dAccent
-                            }
-                          }
-
-                          // Aviso de imagen rota
-                          Rectangle {
-                            visible: modelData.kind === "image" && tile.broken
-                            anchors.fill: parent
-                            anchors.margins: 1
-                            radius: 11
-                            color: root.dSurfaceHi
-                            Text {
-                              anchors.centerIn: parent
-                              text: "⚠"
-                              font.pixelSize: 18
-                              textFormat: Text.PlainText
-                              color: root.dMuted
-                            }
-                          }
-                        }
-
-                        // Nombre debajo del thumbnail
-                        Text {
-                          anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
-                          height: 18
-                          text: cell.modelData.name
-                          font.pixelSize: 9
-                          textFormat: Text.PlainText
-                          elide: Text.ElideMiddle
-                          color: tile.selected ? root.dAccent : root.dMuted
                         }
                       }
                     }
@@ -1252,182 +1588,209 @@ function ingestScan(raw) {
             Layout.fillWidth: true
             spacing: 8
 
-            Text {
-              text: "DISPLAY · PER MONITOR"
-              font.pixelSize: 8
-              font.bold: true
-              font.letterSpacing: 1.6
-              textFormat: Text.PlainText
-              color: root.dMuted
-            }
-
-            // Dropdown de monitor con chevron dibujado
-            Rectangle {
+            // Fila DISPLAY + selector (label a la izquierda, como el mockup)
+            RowLayout {
               Layout.fillWidth: true
-              height: 36
-              radius: 10
-              color: root.dPanel
-              border { color: monBox.popup.visible ? root.dAccent : root.dBorder; width: 1 }
+              spacing: 10
 
-              ComboBox {
-                id: monBox
-                anchors.fill: parent
-                anchors.leftMargin: 2
-                anchors.rightMargin: 2
-                model: root.monitors
-                currentIndex: root.monitors.indexOf(root.currentMonitor)
-                onActivated: root.currentMonitor = currentText
-                background: Rectangle { color: "transparent" }
-                contentItem: Text {
-                  text: monBox.displayText
-                  textFormat: Text.PlainText
-                  color: root.dText
-                  font.pixelSize: 12
-                  font.bold: true
-                  leftPadding: 12
-                  verticalAlignment: Text.AlignVCenter
-                  elide: Text.ElideRight
-                }
-                indicator: Item {
-                  implicitWidth: 11
-                  implicitHeight: 7
-                  width: 11
-                  height: 7
-                  x: monBox.width - width - 14
-                  y: (monBox.height - height) / 2
-                  // Chevron "v" con dos barras rotadas (sin depender de fuentes)
-                  Rectangle {
-                    width: 7; height: 1.6; color: root.dAccent
-                    rotation: 45
-                    x: 0; y: 2.4
-                    transformOrigin: Item.Left
-                    antialiasing: true
-                  }
-                  Rectangle {
-                    width: 7; height: 1.6; color: root.dAccent
-                    rotation: -45
-                    x: 4; y: 2.4
-                    transformOrigin: Item.Left
-                    antialiasing: true
-                  }
-                }
-                popup: Popup {
-                  y: monBox.height + 4
-                  width: monBox.width
-                  implicitHeight: Math.min(contentItem.implicitHeight + 8, 240)
-                  padding: 4
-                  // Sombra propia: separa la lista del panel aunque el tema
-                  // no contraste mucho.
-                  enter: Transition {
-                    NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 110 }
-                  }
-                  contentItem: ListView {
-                    clip: true
-                    implicitHeight: contentHeight
-                    model: monBox.popup.visible ? monBox.delegateModel : null
-                    currentIndex: monBox.highlightedIndex
-                    ScrollBar.vertical: ScrollBar {}
-                  }
-                  background: Rectangle {
-                    radius: 10
-                    // Opaco: con el fondo translúcido del tema la lista
-                    // abierta no se leía.
-                    color: root.dPanel
-                    border { color: root.dAccent; width: 1 }
-                  }
-                }
-                delegate: ItemDelegate {
-                  required property int index
-                  required property string modelData
-                  width: monBox.width - 8
-                  height: 32
-                  highlighted: monBox.highlightedIndex === index
+              Text {
+                Layout.alignment: Qt.AlignVCenter
+                text: "DISPLAY · PER MONITOR"
+                font.pixelSize: 9
+                font.weight: Font.Bold
+                font.letterSpacing: 2
+                textFormat: Text.PlainText
+                color: root.dMuted
+              }
+
+              // Dropdown de monitor con chevron dibujado
+              Rectangle {
+                Layout.fillWidth: true
+                height: 38
+                radius: 8
+                color: root.dSurface
+                border { color: monBox.popup.visible ? root.dAccent : root.dBorder; width: 1 }
+
+                ComboBox {
+                  id: monBox
+                  anchors.fill: parent
+                  anchors.leftMargin: 2
+                  anchors.rightMargin: 2
+                  model: root.monitors
+                  currentIndex: root.monitors.indexOf(root.currentMonitor)
+                  onActivated: root.currentMonitor = currentText
+                  background: Rectangle { color: "transparent" }
                   contentItem: Text {
-                    text: modelData
+                    text: monBox.displayText
                     textFormat: Text.PlainText
-                    color: highlighted ? root.dAccent : root.dText
-                    font.pixelSize: 12
-                    font.bold: highlighted
+                    color: root.dText
+                    font.pixelSize: 13
+                    font.weight: Font.DemiBold
+                    leftPadding: 14
                     verticalAlignment: Text.AlignVCenter
-                    leftPadding: 10
+                    elide: Text.ElideRight
                   }
-                  background: Rectangle {
-                    radius: 8
-                    color: highlighted ? Util.alpha(root.dAccent, 0.12) : "transparent"
+                  indicator: Item {
+                    implicitWidth: 11
+                    implicitHeight: 7
+                    width: 11
+                    height: 7
+                    x: monBox.width - width - 14
+                    y: (monBox.height - height) / 2
+                    // Chevron "v" con dos barras rotadas (sin depender de fuentes)
+                    Rectangle {
+                      width: 7; height: 1.6; color: root.dAccent
+                      rotation: 45
+                      x: 0; y: 2.4
+                      transformOrigin: Item.Left
+                      antialiasing: true
+                    }
+                    Rectangle {
+                      width: 7; height: 1.6; color: root.dAccent
+                      rotation: -45
+                      x: 4; y: 2.4
+                      transformOrigin: Item.Left
+                      antialiasing: true
+                    }
+                  }
+                  popup: Popup {
+                    y: monBox.height + 4
+                    width: monBox.width
+                    implicitHeight: Math.min(contentItem.implicitHeight + 8, 240)
+                    padding: 4
+                    // Sombra propia: separa la lista del panel aunque el tema
+                    // no contraste mucho.
+                    enter: Transition {
+                      NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 110 }
+                    }
+                    contentItem: ListView {
+                      clip: true
+                      implicitHeight: contentHeight
+                      model: monBox.popup.visible ? monBox.delegateModel : null
+                      currentIndex: monBox.highlightedIndex
+                      ScrollBar.vertical: ScrollBar {}
+                    }
+                    background: Rectangle {
+                      radius: 8
+                      // Opaco: con el fondo translúcido del tema la lista
+                      // abierta no se leía.
+                      color: root.dPanel
+                      border { color: root.dAccent; width: 1 }
+                    }
+                  }
+                  delegate: ItemDelegate {
+                    required property int index
+                    required property string modelData
+                    width: monBox.width - 8
+                    height: 32
+                    highlighted: monBox.highlightedIndex === index
+                    contentItem: Text {
+                      text: modelData
+                      textFormat: Text.PlainText
+                      color: highlighted ? root.dAccent : root.dText
+                      font.pixelSize: 12
+                      font.weight: highlighted ? Font.DemiBold : Font.Normal
+                      verticalAlignment: Text.AlignVCenter
+                      leftPadding: 10
+                    }
+                    background: Rectangle {
+                      radius: 6
+                      color: highlighted ? Util.alpha(root.dAccent, 0.12) : "transparent"
+                    }
                   }
                 }
               }
             }
 
-            // ---------- botones pill ----------
+            // ---------- acciones ----------
             RowLayout {
               Layout.fillWidth: true
-              spacing: 8
+              spacing: 12
 
-              // APPLY: cian sólido
+              // APPLY: relleno de acento (peso 2x)
               Rectangle {
                 Layout.fillWidth: true
-                height: 38
-                radius: 19
-                color: root.currentIndex >= 0 ? root.dAccent : Util.alpha(root.dAccent, 0.18)
+                Layout.horizontalStretchFactor: 4
+                height: 40
+                radius: 8
+                color: root.currentIndex >= 0
+                  ? (applyMouse.hovered ? Qt.lighter(root.dAccent, 1.1) : root.dAccent)
+                  : Util.alpha(root.dAccent, 0.18)
                 Text {
                   anchors.centerIn: parent
                   text: "APPLY"
-                  font.pixelSize: 11
-                  font.bold: true
-                  font.letterSpacing: 1.6
+                  font.pixelSize: 12
+                  font.weight: Font.Bold
+                  font.letterSpacing: 1.5
                   textFormat: Text.PlainText
                   color: root.currentIndex >= 0 ? Color.background : Util.alpha(root.dAccent, 0.5)
                 }
                 MouseArea {
+                  id: applyMouse
                   anchors.fill: parent
+                  hoverEnabled: true
                   enabled: root.currentIndex >= 0
                   cursorShape: Qt.PointingHandCursor
                   onClicked: root.applySelected()
                 }
               }
 
-              // IMPORT: contorno gris oscuro
+              // IMPORT: contorno (peso 1.5x)
               Rectangle {
                 Layout.fillWidth: true
-                height: 38
-                radius: 19
-                color: "transparent"
-                border { color: root.dBorder; width: 1.4 }
+                Layout.horizontalStretchFactor: 3
+                height: 40
+                radius: 8
+                color: importMouse.hovered ? root.dSurface : "transparent"
+                border { color: importMouse.hovered ? root.dText : root.dBorder; width: 1 }
                 Text {
                   anchors.centerIn: parent
                   text: "IMPORT"
-                  font.pixelSize: 11
-                  font.bold: true
-                  font.letterSpacing: 1.4
+                  font.pixelSize: 12
+                  font.weight: Font.Bold
+                  font.letterSpacing: 1.5
                   textFormat: Text.PlainText
-                  color: root.dMuted
+                  color: root.dText
                 }
                 MouseArea {
+                  id: importMouse
                   anchors.fill: parent
+                  hoverEnabled: true
                   cursorShape: Qt.PointingHandCursor
                   onClicked: root.openImportDialog()
                 }
               }
 
-              // DELETE: contorno rojo oscuro
+              // DELETE: peligro (peso 1x)
               Rectangle {
                 Layout.fillWidth: true
-                height: 38
-                radius: 19
-                color: root.currentRemovable ? Util.alpha(root.dDanger, 0.10) : "transparent"
-                border { color: root.currentRemovable ? root.dDanger : Util.alpha(root.dDanger, 0.30); width: 1.4 }
+                Layout.horizontalStretchFactor: 2
+                height: 40
+                radius: 8
+                color: !root.currentRemovable
+                  ? "transparent"
+                  : (deleteMouse.hovered ? root.dDanger : Util.alpha(root.dDanger, 0.10))
+                border {
+                  color: root.currentRemovable
+                    ? (deleteMouse.hovered ? root.dDanger : Util.alpha(root.dDanger, 0.25))
+                    : Util.alpha(root.dDanger, 0.30)
+                  width: 1
+                }
                 Text {
                   anchors.centerIn: parent
                   text: "DELETE"
-                  font.pixelSize: 11
-                  font.bold: true
-                  font.letterSpacing: 1.4
+                  font.pixelSize: 12
+                  font.weight: Font.Bold
+                  font.letterSpacing: 1.5
                   textFormat: Text.PlainText
-                  color: root.currentRemovable ? root.dDanger : Util.alpha(root.dDanger, 0.5)
+                  color: !root.currentRemovable
+                    ? Util.alpha(root.dDanger, 0.5)
+                    : (deleteMouse.hovered ? Color.background : root.dDanger)
                 }
                 MouseArea {
+                  id: deleteMouse
                   anchors.fill: parent
+                  hoverEnabled: true
                   enabled: root.currentRemovable
                   cursorShape: Qt.PointingHandCursor
                   onClicked: root.confirmRemove()
@@ -1435,41 +1798,27 @@ function ingestScan(raw) {
               }
             }
 
-            // ---------- toggles ----------
+            // ---------- auxiliares ----------
             RowLayout {
               Layout.fillWidth: true
-              spacing: 8
+              spacing: 10
 
-              // Toggle AUTO/OFF: knob corredizo, sin bordes.
+              // AUTO / OFF (pausa automática del vídeo)
               Rectangle {
                 Layout.fillWidth: true
-                height: 34
-                radius: 17
-                color: root.dSurface
-
-                Rectangle {
-                  id: autoKnob
-                  width: (parent.width - 8) / 2
-                  height: parent.height - 6
-                  y: 3
-                  x: root.autoPause ? parent.width - width - 4 : 4
-                  radius: 14
-                  color: root.autoPause ? Util.alpha(root.dAccent, 0.22) : root.dSurfaceHi
-                  Behavior on x { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
-                  Behavior on color { ColorAnimation { duration: 150 } }
-                  Text {
-                    anchors.centerIn: parent
-                    // El rótulo sigue al knob: a la derecha = AUTO, izquierda = OFF
-                    text: root.autoPause ? "AUTO" : "OFF"
-                    font.pixelSize: 10
-                    font.bold: true
-                    font.letterSpacing: 1.2
-                    textFormat: Text.PlainText
-                    color: root.autoPause ? root.dAccent : root.dMuted
-                  }
+                height: 38
+                radius: 8
+                color: root.autoPause ? root.dSurfaceHi : root.dSurface
+                border { color: root.autoPause ? root.dAccent : root.dBorder; width: 1 }
+                Text {
+                  anchors.centerIn: parent
+                  text: root.autoPause ? "AUTO" : "OFF"
+                  font.pixelSize: 11
+                  font.weight: Font.Bold
+                  font.letterSpacing: 1.5
+                  textFormat: Text.PlainText
+                  color: root.autoPause ? root.dAccent : root.dMuted
                 }
-
-                // Zona clicable: alterna AUTO / OFF
                 MouseArea {
                   anchors.fill: parent
                   cursorShape: Qt.PointingHandCursor
@@ -1477,20 +1826,20 @@ function ingestScan(raw) {
                 }
               }
 
-              // Toggle de sonido
+              // Sonido del vídeo
               Rectangle {
-                width: 68
-                height: 34
-                radius: 17
-                color: root.videoSoundActive ? Util.alpha(root.dAccent, 0.12) : root.dSurface
-                border { color: root.videoSoundActive ? Util.alpha(root.dAccent, 0.5) : root.dBorder; width: 1 }
+                width: 72
+                height: 38
+                radius: 8
+                color: root.videoSoundActive ? Util.alpha(root.dSuccess, 0.10) : root.dSurface
+                border { color: root.videoSoundActive ? root.dSuccess : root.dBorder; width: 1 }
                 Text {
                   anchors.centerIn: parent
                   text: root.videoSoundActive ? "♪ ON" : "♪ OFF"
-                  font.pixelSize: 10
-                  font.bold: true
+                  font.pixelSize: 11
+                  font.weight: Font.Bold
                   textFormat: Text.PlainText
-                  color: root.videoSoundActive ? root.dAccent : root.dMuted
+                  color: root.videoSoundActive ? root.dSuccess : root.dMuted
                 }
                 MouseArea {
                   anchors.fill: parent
@@ -1501,17 +1850,29 @@ function ingestScan(raw) {
 
               // Rescanear
               Rectangle {
-                width: 40
-                height: 34
-                radius: 17
+                width: 44
+                height: 38
+                radius: 8
                 color: root.dSurface
                 border { color: root.dBorder; width: 1 }
-                Text {
+                Item {
                   anchors.centerIn: parent
-                  text: "⟳"
-                  font.pixelSize: 13
-                  textFormat: Text.PlainText
-                  color: root.dMuted
+                  width: 16
+                  height: 16
+                  Image {
+                    id: refreshSrc
+                    anchors.fill: parent
+                    source: Qt.resolvedUrl("icons/refresh.svg")
+                    sourceSize { width: 32; height: 32 }
+                    visible: false
+                    smooth: true
+                  }
+                  MultiEffect {
+                    anchors.fill: parent
+                    source: refreshSrc
+                    colorization: 1.0
+                    colorizationColor: root.dMuted
+                  }
                 }
                 MouseArea {
                   anchors.fill: parent
@@ -1523,34 +1884,27 @@ function ingestScan(raw) {
           }
 
           // ---------- pie ----------
-          Text {
+          RowLayout {
             Layout.fillWidth: true
-            text: root.statusText
-            font.pixelSize: 9
-            textFormat: Text.PlainText
-            elide: Text.ElideRight
-            color: root.dMuted
+            Text {
+              Layout.fillWidth: true
+              text: root.statusText
+              font.pixelSize: 9
+              textFormat: Text.PlainText
+              elide: Text.ElideRight
+              color: root.dMuted
+            }
+            Text {
+              text: "ENGINE READY"
+              font.pixelSize: 9
+              font.weight: Font.DemiBold
+              font.letterSpacing: 1
+              textFormat: Text.PlainText
+              color: root.dMuted
+            }
           }
         }
 
-        // Asa de arrastre: mueve la tarjeta desde la cabecera. Con drag.target
-        // el movimiento es 1:1 (el QML compensa que el asa viaje con la propia
-        // tarjeta) y minimum/maximum lo mantienen dentro del monitor.
-        MouseArea {
-          anchors.top: parent.top
-          anchors.left: parent.left
-          anchors.right: parent.right
-          height: 46
-          cursorShape: drag.active ? Qt.ClosedHandCursor : Qt.OpenHandCursor
-          drag.target: card
-          drag.axis: Drag.XAndYAxis
-          drag.minimumX: 0
-          drag.minimumY: 0
-          drag.maximumX: panel.width - card.width
-          drag.maximumY: panel.height - card.height
-          drag.threshold: 6
-          drag.smoothed: true
-        }
       }
     }
 
@@ -1684,7 +2038,7 @@ function ingestScan(raw) {
     root.refreshMonitors()
     root.scan()
     root.readCurrent()
-    root.loadAutoPause()
+    root.resumePausedOnStart()
     Qt.callLater(root.maybeRestoreVideo)
     console.log("[picker.WM] listo, fondos=" + root.themeDir)
     console.log("[picker.WM] tema: " + root.themeName
