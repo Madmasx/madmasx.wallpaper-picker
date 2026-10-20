@@ -117,17 +117,42 @@ Item {
     }
     var m = root.activeVideoMonitor || root.currentMonitor
     if (!m) return
+    var fallback = root.currentMonitor || m
+    var want = root.videoSoundActive ? "auto" : "no"
+    // Se prueban los dos sockets posibles y se usa el que responda: el del
+    // monitor guardado puede ser un archivo muerto de una sesión anterior.
     soundProc.command = ["bash", "-c",
-      "printf '{\"command\":[\"set_property\",\"aid\",\""
-      + (root.videoSoundActive ? "auto" : "no") + "\"]}\\n' | socat - UNIX-CONNECT:"
-      + root.shq(root.monSocket(m)) + " 2>/dev/null"]
+      "s1=" + root.shq(root.monSocket(m)) + "; "
+      + "s2=" + root.shq(root.monSocket(fallback)) + "; live=\"\"; "
+      + "for s in \"$s1\" \"$s2\"; do "
+      + "r=$(printf '{\"command\":[\"get_property\",\"aid\"]}\\n' | socat - UNIX-CONNECT:\"$s\" 2>/dev/null); "
+      + "case \"$r\" in *'\"error\":\"success\"'*) live=\"$s\"; break;; esac; "
+      + "done; "
+      + "[ -n \"$live\" ] || exit 1; "
+      + "printf '{\"command\":[\"set_property\",\"aid\",\"" + want + "\"]}\\n' "
+      + "| socat - UNIX-CONNECT:\"$live\" >/dev/null 2>&1; "
+      + "printf '{\"command\":[\"get_property\",\"aid\"]}\\n' | socat - UNIX-CONNECT:\"$live\" 2>/dev/null"]
     soundProc.running = true
   }
 
+  // Lee de vuelta `aid` para que el botón no mienta si mpv rechazó el cambio.
   Process {
     id: soundProc
-    onExited: function(code) {
-      if (code !== 0) console.log("[picker.WM] no se pudo conmutar el audio (exit " + code + ")")
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var t = String(text || "")
+        if (t.indexOf("\"error\":\"success\"") === -1) {
+          console.log("[picker.WM] ningún socket IPC de mpv respondió")
+          return
+        }
+        var off = t.indexOf("\"data\":false") !== -1
+        var on = /"data":\s*\d/.test(t)
+        if ((off || on) && root.videoSoundActive !== on) {
+          root.videoSoundActive = on
+          root.persistSound(on)
+        }
+      }
     }
   }
 
@@ -171,8 +196,12 @@ Item {
     onLoadFailed: root.syncVideoState("")
   }
 
+  // El archivo de estado acumula una línea por monitor y applyVideo añade al
+  // final, así que la entrada vigente es la ÚLTIMA. Leer la primera daba el
+  // monitor equivocado (y su socket muerto) al conmutar el audio.
   function syncVideoState(raw) {
-    var line = String(raw || "").split("\n")[0] || ""
+    var lines = String(raw || "").split("\n").filter(function(l) { return l.trim() !== "" })
+    var line = lines.length ? lines[lines.length - 1] : ""
     var f = line.split("\t")
     if (f.length >= 3 && f[1]) {
       root.activeVideoPath = String(f[1])
