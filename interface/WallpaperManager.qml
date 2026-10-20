@@ -52,6 +52,7 @@ Item {
   // rejilla) y si trae pista de audio. Sin esto el botón ♪ no sabía a qué
   // fondo conmutar y mentía en vídeos mudos.
   property string activeVideoPath: ""
+  property string activeVideoMonitor: ""
   property bool activeVideoHasAudio: false
   readonly property bool soundAvailable: root.activeVideoPath === "" || root.activeVideoHasAudio
   property bool importDialogActive: false
@@ -102,19 +103,47 @@ Item {
         ? strings.t("status.image").arg(root.baseName(root.activeBackground))
         : strings.t("status.none"))
 
-  // Alterna el audio del vídeo en pantalla. Antes reaplicaba el fondo
-  // seleccionado en la rejilla (o ninguno si no había selección), así que el
-  // botón parecía no hacer nada.
+  // Alterna el audio del vídeo en pantalla. Se hace por el socket IPC de mpv
+  // (aid auto/no): antes se mataba y relanzaba mpvpaper, y el monitor se
+  // quedaba sin fondo mientras el layer surface viejo soltaba el output.
   function setSound(on) {
     root.videoSoundActive = !!on
     console.log("[picker.WM] sonido " + (root.videoSoundActive ? "ON" : "OFF"))
+    root.persistSound(root.videoSoundActive)
     if (!root.applyVideoActive || root.activeVideoPath === "") return
     if (!root.activeVideoHasAudio) {
       console.log("[picker.WM] el vídeo activo no tiene pista de audio")
       return
     }
-    root.applyVideo({ path: root.activeVideoPath, kind: "video",
-                      name: root.baseName(root.activeVideoPath) })
+    var m = root.activeVideoMonitor || root.currentMonitor
+    if (!m) return
+    soundProc.command = ["bash", "-c",
+      "printf '{\"command\":[\"set_property\",\"aid\",\""
+      + (root.videoSoundActive ? "auto" : "no") + "\"]}\\n' | socat - UNIX-CONNECT:"
+      + root.shq(root.monSocket(m)) + " 2>/dev/null"]
+    soundProc.running = true
+  }
+
+  Process {
+    id: soundProc
+    onExited: function(code) {
+      if (code !== 0) console.log("[picker.WM] no se pudo conmutar el audio (exit " + code + ")")
+    }
+  }
+
+  // Deja la preferencia en el estado de vídeo para que la restauración de
+  // sesión relance el fondo con el audio correcto.
+  function persistSound(on) {
+    var st = root.videoStateFile
+    persistSoundProc.command = ["bash", "-c",
+      "st=" + root.shq(st) + "; [ -f \"$st\" ] || exit 0; "
+      + "awk -F'\\t' -v s=" + (on ? 1 : 0) + " 'BEGIN{OFS=\"\\t\"} NF>=3 { $3=s } { print }' "
+      + "\"$st\" > \"$st.tmp\" && mv \"$st.tmp\" \"$st\""]
+    persistSoundProc.running = true
+  }
+
+  Process {
+    id: persistSoundProc
   }
 
   FileView {
@@ -147,9 +176,11 @@ Item {
     var f = line.split("\t")
     if (f.length >= 3 && f[1]) {
       root.activeVideoPath = String(f[1])
+      root.activeVideoMonitor = String(f[0])
       root.videoSoundActive = String(f[2]).trim() === "1"
     } else {
       root.activeVideoPath = ""
+      root.activeVideoMonitor = ""
       // Sin estado no se toca la preferencia: sigue valiendo para el próximo vídeo.
     }
   }
@@ -437,6 +468,7 @@ function ingestScan(raw) {
     var opts = "no-audio panscan=1.0 image-display-duration=inf load-scripts=no " + ipc
     root.applyVideoActive = true
     root.activeVideoPath = ""
+    root.activeVideoMonitor = ""
     root.activeVideoHasAudio = false
     applyProc.command = ["bash", "-c",
       "m=" + root.shq(m) + "; " + root.killMon(m) + "; "
@@ -490,6 +522,7 @@ function ingestScan(raw) {
       + root.shq(item.path) + " >/dev/null 2>&1 & echo UP"]
     applyProc.running = true
     root.activeVideoPath = item.path
+    root.activeVideoMonitor = m
     root.probeAudio(item.path)
     console.log("[picker.WM] vídeo vivo: " + item.path + " en " + m + " · " + audioOpt)
     console.log("[picker.WM] vídeos persistentes (se relanzan al iniciar sesión)")
@@ -575,6 +608,7 @@ function ingestScan(raw) {
         if (String(text || "").indexOf("CHANGED") !== -1) {
           root.applyVideoActive = false
           root.activeVideoPath = ""
+          root.activeVideoMonitor = ""
           root.activeVideoHasAudio = false
           console.log("[picker.WM] fondo externo detectado: vídeo detenido")
         }
