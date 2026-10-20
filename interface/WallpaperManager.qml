@@ -48,6 +48,12 @@ Item {
   property string activeBackground: ""
   property bool applyVideoActive: false
   property bool videoSoundActive: false
+  // Qué vídeo está realmente en pantalla (no el que esté seleccionado en la
+  // rejilla) y si trae pista de audio. Sin esto el botón ♪ no sabía a qué
+  // fondo conmutar y mentía en vídeos mudos.
+  property string activeVideoPath: ""
+  property bool activeVideoHasAudio: false
+  readonly property bool soundAvailable: root.activeVideoPath === "" || root.activeVideoHasAudio
   property bool importDialogActive: false
   property bool importReopen: false
   property bool currentRemovable: false
@@ -96,14 +102,19 @@ Item {
         ? strings.t("status.image").arg(root.baseName(root.activeBackground))
         : strings.t("status.none"))
 
-  // Alterna el sonido del vídeo en vivo. Si hay vídeo activo, se reaplica con
-  // la nueva opción de audio sin tener que volver a elegirlo.
+  // Alterna el audio del vídeo en pantalla. Antes reaplicaba el fondo
+  // seleccionado en la rejilla (o ninguno si no había selección), así que el
+  // botón parecía no hacer nada.
   function setSound(on) {
     root.videoSoundActive = !!on
     console.log("[picker.WM] sonido " + (root.videoSoundActive ? "ON" : "OFF"))
-    if (!root.applyVideoActive) return
-    var item = root.currentIndex >= 0 ? root.images[root.currentIndex] : null
-    if (item && item.kind === "video") root.applyVideo(item)
+    if (!root.applyVideoActive || root.activeVideoPath === "") return
+    if (!root.activeVideoHasAudio) {
+      console.log("[picker.WM] el vídeo activo no tiene pista de audio")
+      return
+    }
+    root.applyVideo({ path: root.activeVideoPath, kind: "video",
+                      name: root.baseName(root.activeVideoPath) })
   }
 
   FileView {
@@ -116,6 +127,31 @@ Item {
     // cuyo nombre acaba en espacio ("dark-carbon "), y quitarlo hacía que
     // el plugin buscara una carpeta inexistente.
     onLoaded: root.themeName = String(text() || "").replace(/^[\r\n]+|[\r\n]+$/g, "")
+  }
+
+  // Estado de vídeo (monitor, ruta, sonido 0/1, fondo base). Se lee para que el
+  // botón ♪ arranque reflejando lo que de verdad suena, también tras reiniciar
+  // sesión: antes siempre nacía en OFF aunque el vídeo tuviera audio.
+  FileView {
+    id: videoStateView
+    path: root.videoStateFile
+    watchChanges: true
+    printErrors: false
+    onLoaded: root.syncVideoState(text())
+    onFileChanged: reload()
+    onLoadFailed: root.syncVideoState("")
+  }
+
+  function syncVideoState(raw) {
+    var line = String(raw || "").split("\n")[0] || ""
+    var f = line.split("\t")
+    if (f.length >= 3 && f[1]) {
+      root.activeVideoPath = String(f[1])
+      root.videoSoundActive = String(f[2]).trim() === "1"
+    } else {
+      root.activeVideoPath = ""
+      // Sin estado no se toca la preferencia: sigue valiendo para el próximo vídeo.
+    }
   }
 
   function shq(s) { return "'" + String(s || "").replace(/'/g, "'\\''") + "'" }
@@ -400,6 +436,8 @@ function ingestScan(raw) {
     var ipc = "--input-ipc-server=" + root.monSocket(m)
     var opts = "no-audio panscan=1.0 image-display-duration=inf load-scripts=no " + ipc
     root.applyVideoActive = true
+    root.activeVideoPath = ""
+    root.activeVideoHasAudio = false
     applyProc.command = ["bash", "-c",
       "m=" + root.shq(m) + "; " + root.killMon(m) + "; "
       + "st=" + root.shq(root.videoStateFile) + "; "
@@ -451,6 +489,8 @@ function ingestScan(raw) {
       + "EGL_PLATFORM=wayland mpvpaper -f -o " + root.shq(mpvOpts) + " \"$m\" "
       + root.shq(item.path) + " >/dev/null 2>&1 & echo UP"]
     applyProc.running = true
+    root.activeVideoPath = item.path
+    root.probeAudio(item.path)
     console.log("[picker.WM] vídeo vivo: " + item.path + " en " + m + " · " + audioOpt)
     console.log("[picker.WM] vídeos persistentes (se relanzan al iniciar sesión)")
   }
@@ -534,6 +574,8 @@ function ingestScan(raw) {
       onStreamFinished: {
         if (String(text || "").indexOf("CHANGED") !== -1) {
           root.applyVideoActive = false
+          root.activeVideoPath = ""
+          root.activeVideoHasAudio = false
           console.log("[picker.WM] fondo externo detectado: vídeo detenido")
         }
       }
@@ -787,6 +829,23 @@ function ingestScan(raw) {
 
   Process {
     id: resumeProc
+  }
+
+  // ffprobe: ¿el fondo trae pista de audio? Con un vídeo mudo el botón ♪ no
+  // tiene nada que conmutar, así que se muestra apagado en vez de mentir.
+  function probeAudio(path) {
+    probeProc.command = ["bash", "-c",
+      "ffprobe -v error -select_streams a -show_entries stream=index "
+      + "-of csv=p=0 " + root.shq(path) + " 2>/dev/null | head -n1"]
+    probeProc.running = true
+  }
+
+  Process {
+    id: probeProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.activeVideoHasAudio = String(text || "").trim() !== ""
+    }
   }
 
   Process {
@@ -1951,25 +2010,35 @@ function ingestScan(raw) {
                 }
               }
 
-              // Sonido del vídeo
+              // Sonido del vídeo. Sólo conmuta si el fondo en pantalla tiene
+              // audio; con un vídeo mudo o una imagen queda como preferencia.
               Rectangle {
                 width: 72
                 height: 38
                 radius: 8
-                color: root.videoSoundActive ? Util.alpha(root.dSuccess, 0.10) : root.dSurface
-                border { color: root.videoSoundActive ? root.dSuccess : root.dBorder; width: 1 }
+                color: root.videoSoundActive && root.soundAvailable
+                  ? Util.alpha(root.dSuccess, 0.10) : root.dSurface
+                border {
+                  color: root.videoSoundActive && root.soundAvailable ? root.dSuccess : root.dBorder
+                  width: 1
+                }
                 Text {
                   anchors.centerIn: parent
-                  text: root.videoSoundActive ? strings.t("sound.on") : strings.t("sound.off")
+                  text: !root.soundAvailable
+                    ? "♪ —"
+                    : (root.videoSoundActive ? strings.t("sound.on") : strings.t("sound.off"))
                   font.pixelSize: 11
                   font.weight: Font.Bold
                   textFormat: Text.PlainText
-                  color: root.videoSoundActive ? root.dSuccess : root.dMuted
+                  color: root.videoSoundActive && root.soundAvailable ? root.dSuccess : root.dMuted
                 }
                 MouseArea {
                   anchors.fill: parent
-                  cursorShape: Qt.PointingHandCursor
-                  onClicked: root.setSound(!root.videoSoundActive)
+                  cursorShape: root.soundAvailable ? Qt.PointingHandCursor : Qt.ForbiddenCursor
+                  onClicked: {
+                    if (!root.soundAvailable) return
+                    root.setSound(!root.videoSoundActive)
+                  }
                 }
               }
 

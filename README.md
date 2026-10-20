@@ -150,6 +150,7 @@ omarchy restart shell
 
 - El plugin no toca la configuración del tema, terminales ni Hyprland: solo gestiona el fondo de pantalla.
 - Las imágenes no requieren `mpvpaper`; si no está instalado, los vídeos simplemente no funcionan.
+- El botón `♪` conmuta el audio del vídeo **que está en pantalla**, no el del fondo seleccionado en la rejilla, y lo reaplica al instante. Si el vídeo no trae pista de audio (o el fondo es una imagen) aparece como `♪ —` y no hace nada. La preferencia se guarda en el estado del plugin y sobrevive al reinicio de sesión.
 
 ## Idiomas
 
