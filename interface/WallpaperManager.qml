@@ -77,7 +77,11 @@ Item {
   readonly property color muted: Color.muted
   readonly property color fg: Color.popups.text
   readonly property color borderColor: Color.popups.border
-  readonly property color scrimColor: Color.imagePicker.scrim
+  // El picker nativo de Omarchy ya no trae backdrop: `Color.imagePicker.scrim`
+  // desapareció de Commons/Color.qml, así que la vinculación quedaba inválida y
+  // Qt pintaba el scrim en negro opaco. Se deriva del fondo del tema con la
+  // misma alpha que usan los otros scrims (menu/polkit/lock: 0.5).
+  readonly property color scrimColor: Util.alpha(Color.background, 0.5)
   readonly property color selectedTileColor: Color.imagePicker.selectedBorder
   readonly property color unselectedTileColor: Color.imagePicker.unselectedBorder
 
