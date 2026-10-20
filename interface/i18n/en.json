@@ -1,0 +1,41 @@
+{
+  "panel.title": "WALLPAPER PICKER",
+  "panel.subtitle": "CYBER WALLPAPER ENGINE",
+  "theme.other": "OTHER THEMES",
+
+  "filter.all": { "one": "ALL (%1)", "other": "ALL (%1)" },
+  "filter.videos": "VIDEOS",
+  "filter.images": "IMAGES",
+  "kind.videos": "videos",
+  "kind.images": "images",
+
+  "empty.none": "No wallpapers for [%1]",
+  "empty.noneHint": "Import one with IMPORT and it will be used in this theme.",
+  "empty.filtered": "No %1 in [%2]",
+
+  "display.label": "DISPLAY · PER MONITOR",
+  "action.apply": "APPLY",
+  "action.import": "IMPORT",
+  "action.delete": "DELETE",
+  "auto.on": "AUTO",
+  "auto.off": "OFF",
+  "sound.on": "♪ ON",
+  "sound.off": "♪ OFF",
+  "footer.ready": "ENGINE READY",
+
+  "delete.title": "DELETE WALLPAPER",
+  "delete.body": "It will be moved to Trash.",
+  "delete.cancel": "CANCEL",
+  "delete.confirm": "DELETE",
+
+  "status.video": "▶ Wallpaper active on %1",
+  "status.image": "Background: %1",
+  "status.none": "Nothing applied yet",
+
+  "import.title": "Import wallpaper",
+  "import.images": "Images",
+  "import.videos": "Videos",
+  "import.all": "All files",
+
+  "widget.tooltip": "Wallpaper picker"
+}

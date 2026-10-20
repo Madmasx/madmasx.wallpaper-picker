@@ -11,6 +11,11 @@ import qs.Commons
 Item {
   id: root
 
+  // Catálogos propios del plugin (interface/i18n/<código>.json). Omarchy pasa
+  // el idioma elegido en Setup > Language y reevalúa los bindings al cambiarlo,
+  // así que la interfaz sigue el idioma del sistema sin reiniciar el shell.
+  Translations { id: strings; directory: Qt.resolvedUrl("i18n") }
+
   property bool opened: false
   property string home: Quickshell.env("HOME")
   readonly property string stateHome: root.home + "/.local/state"
@@ -86,8 +91,10 @@ Item {
   readonly property color unselectedTileColor: Color.imagePicker.unselectedBorder
 
   readonly property string statusText: root.applyVideoActive
-    ? "▶ Wallpaper active on " + (root.currentMonitor || "?")
-    : (root.activeBackground ? "Background: " + root.baseName(root.activeBackground) : "Nothing applied yet")
+    ? strings.t("status.video").arg(root.currentMonitor || "?")
+    : (root.activeBackground
+        ? strings.t("status.image").arg(root.baseName(root.activeBackground))
+        : strings.t("status.none"))
 
   // Alterna el sonido del vídeo en vivo. Si hay vídeo activo, se reaplica con
   // la nueva opción de audio sin tener que volver a elegirlo.
@@ -824,6 +831,13 @@ function ingestScan(raw) {
   // El FileDialog nativo de Quickshell hace crashear el shell al abrirse
   // (bug upstream con toplevels). Se usa zenity como proceso externo, que
   // además libera el foco de teclado del panel mientras está abierto.
+
+  // Escapa el texto traducido antes de incrustarlo en un argumento de zenity:
+  // comillas y barras invertidas romperían la línea de comandos.
+  function zenityArg(text) {
+    return String(text).replace(/\\/g, "\\\\").replace(/"/g, '\\"')
+  }
+
   function openImportDialog() {
     if (root.importDialogActive) return
     root.importDialogActive = true
@@ -832,10 +846,10 @@ function ingestScan(raw) {
     console.log("[picker.WM] importar: abriendo zenity en " + root.themeDir)
     importDialogProc.command = ["bash", "-c",
       "d=" + root.shq(root.themeDir) + "; [ -d \"$d\" ] || d=$HOME; "
-      + "zenity --file-selection --title=\"Import wallpaper\" "
-      + "--file-filter=\"Images | *.jpg *.jpeg *.png *.gif *.bmp *.webp\" "
-      + "--file-filter=\"Videos | *.mkv *.mp4 *.webm *.avi\" "
-      + "--file-filter=\"All files | *\" "
+      + "zenity --file-selection --title=\"" + root.zenityArg(strings.t("import.title")) + "\" "
+      + "--file-filter=\"" + root.zenityArg(strings.t("import.images")) + " | *.jpg *.jpeg *.png *.gif *.bmp *.webp\" "
+      + "--file-filter=\"" + root.zenityArg(strings.t("import.videos")) + " | *.mkv *.mp4 *.webm *.avi\" "
+      + "--file-filter=\"" + root.zenityArg(strings.t("import.all")) + " | *\" "
       + "--filename=\"$d/\""]
     importDialogProc.running = true
   }
@@ -1154,7 +1168,7 @@ function ingestScan(raw) {
                 Layout.alignment: Qt.AlignVCenter
                 spacing: 2
                 Text {
-                  text: "WALLPAPER PICKER"
+                  text: strings.t("panel.title")
                   font.pixelSize: 18
                   font.weight: Font.ExtraBold
                   font.letterSpacing: 2
@@ -1162,7 +1176,7 @@ function ingestScan(raw) {
                   color: root.dText
                 }
                 Text {
-                  text: "CYBER WALLPAPER ENGINE"
+                  text: strings.t("panel.subtitle")
                   font.pixelSize: 9
                   font.weight: Font.DemiBold
                   font.letterSpacing: 3
@@ -1216,7 +1230,7 @@ function ingestScan(raw) {
                   Text {
                     id: otherThemesLabel
                     anchors.centerIn: parent
-                    text: "OTHER THEMES"
+                    text: strings.t("theme.other")
                     font.pixelSize: 9
                     font.weight: Font.Bold
                     font.letterSpacing: 1.4
@@ -1293,7 +1307,8 @@ function ingestScan(raw) {
               Text {
                 id: allLabel
                 anchors.centerIn: parent
-                text: "TODOS (" + root.images.length + ")"
+                text: strings.tn("filter.all", root.images.length)
+                    .arg(I18n.formatNumber(root.images.length))
                 font.pixelSize: 10
                 font.weight: Font.DemiBold
                 font.letterSpacing: 1.2
@@ -1339,7 +1354,7 @@ function ingestScan(raw) {
                 }
                 Text {
                   Layout.alignment: Qt.AlignVCenter
-                  text: "VIDEOS"
+                  text: strings.t("filter.videos")
                   font.pixelSize: 10
                   font.weight: Font.DemiBold
                   font.letterSpacing: 1.2
@@ -1386,7 +1401,7 @@ function ingestScan(raw) {
                 }
                 Text {
                   Layout.alignment: Qt.AlignVCenter
-                  text: "IMÁGENES"
+                  text: strings.t("filter.images")
                   font.pixelSize: 10
                   font.weight: Font.DemiBold
                   font.letterSpacing: 1.2
@@ -1416,9 +1431,11 @@ function ingestScan(raw) {
               width: parent.width - 40
               text: root.visibleCount === 0
                 ? (root.filterKind === "all"
-                    ? "No wallpapers for [" + root.themeName.trim() + "]\nImport one with IMPORT and it will be used in this theme."
-                    : "No " + (root.filterKind === "video" ? "videos" : "images")
-                      + " in [" + root.themeName.trim() + "]")
+                    ? strings.t("empty.none").arg(root.themeName.trim())
+                      + "\n" + strings.t("empty.noneHint")
+                    : strings.t("empty.filtered")
+                        .arg(strings.t(root.filterKind === "video" ? "kind.videos" : "kind.images"))
+                        .arg(root.themeName.trim()))
                 : ""
               font.pixelSize: 11
               lineHeight: 1.4
@@ -1703,7 +1720,7 @@ function ingestScan(raw) {
 
               Text {
                 Layout.alignment: Qt.AlignVCenter
-                text: "DISPLAY · PER MONITOR"
+                text: strings.t("display.label")
                 font.pixelSize: 9
                 font.weight: Font.Bold
                 font.letterSpacing: 2
@@ -1826,7 +1843,7 @@ function ingestScan(raw) {
                   : Util.alpha(root.dAccent, 0.18)
                 Text {
                   anchors.centerIn: parent
-                  text: "APPLY"
+                  text: strings.t("action.apply")
                   font.pixelSize: 12
                   font.weight: Font.Bold
                   font.letterSpacing: 1.5
@@ -1853,7 +1870,7 @@ function ingestScan(raw) {
                 border { color: importMouse.hovered ? root.dText : root.dBorder; width: 1 }
                 Text {
                   anchors.centerIn: parent
-                  text: "IMPORT"
+                  text: strings.t("action.import")
                   font.pixelSize: 12
                   font.weight: Font.Bold
                   font.letterSpacing: 1.5
@@ -1886,7 +1903,7 @@ function ingestScan(raw) {
                 }
                 Text {
                   anchors.centerIn: parent
-                  text: "DELETE"
+                  text: strings.t("action.delete")
                   font.pixelSize: 12
                   font.weight: Font.Bold
                   font.letterSpacing: 1.5
@@ -1920,7 +1937,7 @@ function ingestScan(raw) {
                 border { color: root.autoPause ? root.dAccent : root.dBorder; width: 1 }
                 Text {
                   anchors.centerIn: parent
-                  text: root.autoPause ? "AUTO" : "OFF"
+                  text: root.autoPause ? strings.t("auto.on") : strings.t("auto.off")
                   font.pixelSize: 11
                   font.weight: Font.Bold
                   font.letterSpacing: 1.5
@@ -1943,7 +1960,7 @@ function ingestScan(raw) {
                 border { color: root.videoSoundActive ? root.dSuccess : root.dBorder; width: 1 }
                 Text {
                   anchors.centerIn: parent
-                  text: root.videoSoundActive ? "♪ ON" : "♪ OFF"
+                  text: root.videoSoundActive ? strings.t("sound.on") : strings.t("sound.off")
                   font.pixelSize: 11
                   font.weight: Font.Bold
                   textFormat: Text.PlainText
@@ -2003,7 +2020,7 @@ function ingestScan(raw) {
               color: root.dMuted
             }
             Text {
-              text: "ENGINE READY"
+              text: strings.t("footer.ready")
               font.pixelSize: 9
               font.weight: Font.DemiBold
               font.letterSpacing: 1
@@ -2043,7 +2060,7 @@ function ingestScan(raw) {
 
           Text {
             width: parent.width
-            text: "DELETE WALLPAPER"
+            text: strings.t("delete.title")
             font.pixelSize: 11
             font.bold: true
             font.letterSpacing: 1.6
@@ -2060,7 +2077,7 @@ function ingestScan(raw) {
           }
           Text {
             width: parent.width
-            text: "It will be moved to Trash."
+            text: strings.t("delete.body")
             font.pixelSize: 10
             textFormat: Text.PlainText
             color: root.dMuted
@@ -2076,7 +2093,7 @@ function ingestScan(raw) {
               border { color: root.dBorder; width: 1 }
               Text {
                 anchors.centerIn: parent
-                text: "CANCEL"
+                text: strings.t("delete.cancel")
                 font.pixelSize: 10
                 font.bold: true
                 font.letterSpacing: 1.2
@@ -2097,7 +2114,7 @@ function ingestScan(raw) {
               border { color: root.dDanger; width: 1 }
               Text {
                 anchors.centerIn: parent
-                text: "DELETE"
+                text: strings.t("delete.confirm")
                 font.pixelSize: 10
                 font.bold: true
                 font.letterSpacing: 1.2

@@ -151,6 +151,14 @@ omarchy restart shell
 - El plugin no toca la configuración del tema, terminales ni Hyprland: solo gestiona el fondo de pantalla.
 - Las imágenes no requieren `mpvpaper`; si no está instalado, los vídeos simplemente no funcionan.
 
+## Idiomas
+
+La interfaz sigue el idioma de Omarchy (`Setup > Language`, archivo `~/.config/omarchy/language`). Si no hay idioma elegido, se usa inglés.
+
+Los textos viven en `interface/i18n/<código>.json`, un archivo plano por idioma, y se leen con `Commons.Translations`. Cambiar de idioma en Omarchy reevalúa la interfaz sin reiniciar el shell.
+
+Incluidos: `en.json` y `es.json`. Para añadir otro idioma, copia `en.json` a `<código>.json` (p. ej. `pt-BR.json`) y traduce los valores: las claves que falten caen a `en.json`, así que se puede ir idioma por idioma. Las cadenas con `%1` se rellenan con `.arg()`; `filter.all` es plural y usa las formas `one`/`other`.
+
 ## Licencia
 
 MIT — ver [LICENSE](LICENSE).

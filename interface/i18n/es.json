@@ -1,0 +1,41 @@
+{
+  "panel.title": "SELECTOR DE FONDOS",
+  "panel.subtitle": "MOTOR DE FONDOS CYBER",
+  "theme.other": "OTROS TEMAS",
+
+  "filter.all": { "one": "TODOS (%1)", "other": "TODOS (%1)" },
+  "filter.videos": "VÍDEOS",
+  "filter.images": "IMÁGENES",
+  "kind.videos": "vídeos",
+  "kind.images": "imágenes",
+
+  "empty.none": "No hay fondos para [%1]",
+  "empty.noneHint": "Importa uno con IMPORTAR y se usará en este tema.",
+  "empty.filtered": "No hay %1 en [%2]",
+
+  "display.label": "PANTALLA · POR MONITOR",
+  "action.apply": "APLICAR",
+  "action.import": "IMPORTAR",
+  "action.delete": "BORRAR",
+  "auto.on": "AUTO",
+  "auto.off": "OFF",
+  "sound.on": "♪ ON",
+  "sound.off": "♪ OFF",
+  "footer.ready": "MOTOR LISTO",
+
+  "delete.title": "BORRAR FONDO",
+  "delete.body": "Se moverá a la papelera.",
+  "delete.cancel": "CANCELAR",
+  "delete.confirm": "BORRAR",
+
+  "status.video": "▶ Fondo activo en %1",
+  "status.image": "Fondo: %1",
+  "status.none": "Ningún fondo aplicado",
+
+  "import.title": "Importar fondo",
+  "import.images": "Imágenes",
+  "import.videos": "Vídeos",
+  "import.all": "Todos los archivos",
+
+  "widget.tooltip": "Selector de fondos"
+}

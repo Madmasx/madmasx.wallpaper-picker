@@ -1,9 +1,14 @@
 import QtQuick 6.11
 import qs.Ui
+import qs.Commons
 
 BarWidget {
   id: root
   moduleName: "madmasx.wallpaper-picker"
+
+  // Mismo directorio de catálogos que el panel: el tooltip sigue el idioma
+  // elegido en Omarchy.
+  Translations { id: strings; directory: Qt.resolvedUrl("i18n") }
 
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
@@ -52,7 +57,7 @@ BarWidget {
     bar: root.bar
     text: "󰸌"
     horizontalMargin: 7.5
-    tooltipText: "Wallpaper picker"
+    tooltipText: strings.t("widget.tooltip")
     onPressed: function(b) {
       if (!root.bar) return
       if (b === Qt.LeftButton) root.toggle()
