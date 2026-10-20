@@ -1211,7 +1211,7 @@ function ingestScan(raw) {
       Rectangle {
         id: card
         width: 620
-        height: 664
+        height: 692
         radius: 16
         color: root.dBg
         border { color: root.dBorder; width: 1 }
@@ -2158,6 +2158,81 @@ function ingestScan(raw) {
               font.letterSpacing: 1
               textFormat: Text.PlainText
               color: root.dMuted
+            }
+          }
+
+          // ---------- firma ----------
+          // Crédito + enlaces. Se abren con xdg-open vía Util.execArgv (argv,
+          // sin shell) y las URLs son constantes, no datos de entrada.
+          RowLayout {
+            Layout.fillWidth: true
+            Layout.topMargin: 2
+            spacing: 10
+
+            Text {
+              Layout.fillWidth: true
+              text: strings.t("footer.credit")
+              font.pixelSize: 9
+              font.weight: Font.DemiBold
+              font.letterSpacing: 1.2
+              textFormat: Text.PlainText
+              color: Util.alpha(root.dText, 0.45)
+            }
+
+            Item {
+              Layout.alignment: Qt.AlignVCenter
+              implicitWidth: 13
+              implicitHeight: 13
+              Image {
+                id: xSrc
+                anchors.fill: parent
+                source: Qt.resolvedUrl("icons/x.svg")
+                sourceSize { width: 26; height: 26 }
+                visible: false
+                smooth: true
+              }
+              MultiEffect {
+                anchors.fill: parent
+                source: xSrc
+                colorization: 1.0
+                colorizationColor: xMouse.containsMouse
+                  ? root.dAccent : Util.alpha(root.dText, 0.5)
+              }
+              MouseArea {
+                id: xMouse
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: Util.execArgv(["xdg-open", "https://x.com/madmasx"])
+              }
+            }
+
+            Item {
+              Layout.alignment: Qt.AlignVCenter
+              implicitWidth: 13
+              implicitHeight: 13
+              Image {
+                id: ghSrc
+                anchors.fill: parent
+                source: Qt.resolvedUrl("icons/github.svg")
+                sourceSize { width: 26; height: 26 }
+                visible: false
+                smooth: true
+              }
+              MultiEffect {
+                anchors.fill: parent
+                source: ghSrc
+                colorization: 1.0
+                colorizationColor: ghMouse.containsMouse
+                  ? root.dAccent : Util.alpha(root.dText, 0.5)
+              }
+              MouseArea {
+                id: ghMouse
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: Util.execArgv(["xdg-open", "https://github.com/Madmasx"])
+              }
             }
           }
         }

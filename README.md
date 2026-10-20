@@ -9,6 +9,7 @@ Plugin de [Omarchy](https://omarchy.org/) para navegar, aplicar, importar y elim
 - ✅ **Grid masonry** con las miniaturas de los fondos del tema activo, cada una a su proporción real.
 - ✅ **Vídeos vivos** con `mpvpaper`: loop, con o sin sonido, y **miniatura autogenerada** (fotograma extraído con `ffmpeg` y cacheado).
 - ✅ **Un fondo por monitor** (imagen o vídeo): puedes tener fondos distintos en cada pantalla y aplicar en uno **no toca** los demás.
+- ✅ **Firma en el panel**: crédito «By Madmasx» al pie, con enlaces directos a X y GitHub.
 - ✅ **Pausa automática**: si una ventana tapa casi todo un monitor, el vídeo se pausa solo y vuelve al despejarse.
 - ✅ **Persistencia**: el fondo aplicado sobrevive a reinicios y cambios de workspace.
 - ✅ **Importa** fondos con `zenity` y **elimina** los tuyos moviéndolos a la papelera.
